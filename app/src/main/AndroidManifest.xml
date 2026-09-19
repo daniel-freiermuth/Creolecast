@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
+    <!-- Casting holds a PARTIAL_WAKE_LOCK for the whole session (see
+         AudioCastService.acquireWakeLock) so capture/streaming survives screen-off. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".CreoleCastApp"
