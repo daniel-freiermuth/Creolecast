@@ -204,7 +204,7 @@ class MainActivity : AppCompatActivity() {
             },
             onDeleteClick = { server ->
                 statusCard.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                discoveryManager.removeServer(server.name)
+                discoveryManager.removeServer(server)
             }
         )
 

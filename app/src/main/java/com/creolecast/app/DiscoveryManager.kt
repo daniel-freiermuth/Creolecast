@@ -344,9 +344,23 @@ class DiscoveryManager(private val context: Context) {
         activeResolves = 0
     }
 
-    fun removeServer(name: String) {
+    /**
+     * Removes a server the user deleted from the list.
+     *
+     * Matching is by [identityOf] rather than by map key. Every discovery path derives
+     * its own key — the plain name, "name@host" when two hosts claim one name,
+     * "name::platform" for AirPlay/AirPlay 2, or the bare host for RAOP — so a caller
+     * holding only a [Server] cannot reconstruct the key it was stored under. Removing
+     * by display name, as this once did, silently did nothing for every AirPlay,
+     * AirPlay 2 and name-disambiguated entry.
+     */
+    fun removeServer(server: Server) {
+        val identity = identityOf(server)
         synchronized(discoveredServers) {
-            discoveredServers.remove(name)
+            if (!discoveredServers.entries.removeAll { identityOf(it.value) == identity }) {
+                Log.w(TAG, "removeServer: no entry matching $identity")
+                return
+            }
             _servers.value = discoveredServers.values.toList()
         }
     }
@@ -554,6 +568,16 @@ class DiscoveryManager(private val context: Context) {
             val uri = try { java.net.URI(raw) } catch (e: Exception) { return null }
             return if (uri.host == expectedHost) raw else null
         }
+
+        /**
+         * Stable identity of a discovered server: the tuple that actually distinguishes
+         * one receiver from another, independent of which discovery path found it and of
+         * metadata merged in later ([Server.extra], [Server.version]). The name is part
+         * of it because host+port+platform is not unique — every DLNA entry carries
+         * port 0, so several renderers on one IP share that triple.
+         */
+        internal fun identityOf(server: Server): String =
+            "${server.host}:${server.port}:${server.platform ?: "unknown"}:${server.name}"
     }
 }
 
