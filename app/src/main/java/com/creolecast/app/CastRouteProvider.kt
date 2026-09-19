@@ -17,17 +17,18 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Publishes discovered AirPlay / AriaCast receivers as system media routes so
- * they appear in the system output picker (the speaker icon on the volume
- * panel) alongside Bluetooth and Cast devices.
+ * Publishes every receiver [DiscoveryManager] has found — AirPlay, AirPlay 2, DLNA,
+ * Google Cast, Snapcast, AriaCast and manually added hosts alike — as system media
+ * routes, so they appear in the system output picker (the speaker icon on the volume
+ * panel) alongside Bluetooth and Cast devices. Nothing here filters by platform.
  *
  * Volume changes from the system UI arrive via [onSetRouteVolume] /
  * [onSetSessionVolume] and are forwarded to [AudioCastService.sendVolumeDb].
  */
-class AirPlayRouteProvider : MediaRoute2ProviderService() {
+class CastRouteProvider : MediaRoute2ProviderService() {
 
     companion object {
-        private const val TAG = "AirPlayRouteProvider"
+        private const val TAG = "CastRouteProvider"
         private const val SESSION_ID_PREFIX = "creolecast-session-"
         private const val VOLUME_MAX = 30
     }
@@ -59,7 +60,7 @@ class AirPlayRouteProvider : MediaRoute2ProviderService() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "AirPlayRouteProvider created")
+        Log.i(TAG, "CastRouteProvider created")
         // Use the process-wide DiscoveryManager so already-found servers are
         // available immediately — no fresh mDNS scan needed on every service restart.
         discoveryManager = (application as CreoleCastApp).discoveryManager
@@ -71,7 +72,7 @@ class AirPlayRouteProvider : MediaRoute2ProviderService() {
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "AirPlayRouteProvider destroyed")
+        Log.i(TAG, "CastRouteProvider destroyed")
         discoveryJob?.cancel()
         // Don't stop discovery — the shared DiscoveryManager keeps running
         // so routes are instantly available on the next service start.
@@ -99,7 +100,11 @@ class AirPlayRouteProvider : MediaRoute2ProviderService() {
     }
 
     private fun publishRoutes(servers: List<Server>) {
-        val routes = servers.map { server -> buildRouteInfo(server) }
+        // notifyRoutes() throws if two routes share an id, which would take the whole
+        // process down from a discovery callback. Distinct discovered entries can still
+        // collapse onto one id (same device answering on two discovery protocols), so
+        // enforce the platform's uniqueness requirement here rather than trusting it.
+        val routes = servers.map { server -> buildRouteInfo(server) }.distinctBy { it.id }
         Log.d(TAG, "Publishing ${routes.size} routes: ${routes.map { it.name }}")
         notifyRoutes(routes)
     }
@@ -117,8 +122,10 @@ class AirPlayRouteProvider : MediaRoute2ProviderService() {
         return builder.build()
     }
 
+    // The name is part of the id because host+port+platform alone is not unique:
+    // every DLNA entry carries port 0, so two renderers on one IP would collide.
     private fun routeIdFor(server: Server): String =
-        "${server.host}:${server.port}:${server.platform ?: "unknown"}"
+        "${server.host}:${server.port}:${server.platform ?: "unknown"}:${server.name}"
 
     // ── Volume ──────────────────────────────────────────────────────────
 
@@ -156,8 +163,10 @@ class AirPlayRouteProvider : MediaRoute2ProviderService() {
         notifySessionUpdated(updated)
     }
 
+    /** Must stay byte-identical to the [Server] overload above — the id produced here
+     *  is handed to addSelectedRoute() and has to match a published route. */
     private fun routeIdFor(dest: CastDestination): String =
-        "${dest.host}:${dest.port}:${dest.platform ?: "unknown"}"
+        "${dest.host}:${dest.port}:${dest.platform ?: "unknown"}:${dest.name}"
 
     // ── Session lifecycle (system-initiated via output picker) ───────────
 
