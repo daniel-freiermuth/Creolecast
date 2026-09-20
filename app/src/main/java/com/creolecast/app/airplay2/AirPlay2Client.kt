@@ -94,7 +94,7 @@ class AirPlay2Client(
         return loaded
     }
 
-    private fun receiverCredentialKey(): String = host
+    private fun receiverCredentialKey(): String = receiverDeviceId
 
     @Volatile private var running = false
     private var syncThread: Thread? = null
@@ -106,6 +106,31 @@ class AirPlay2Client(
     private var hapReadKey: ByteArray? = null
     private var hapWriteNonce = 0L
     private var hapReadNonce = 0L
+
+    /** Receiver identity and capabilities from /info. */
+    private var receiverDeviceId: String = host
+    private var receiverFeatures = 0L
+    private var receiverSourceVersion = ""
+
+    private fun parseFeatures(value: Any?): Long = when (value) {
+        is Long -> value
+        is Int -> value.toLong()
+        is String -> parseFeatureString(value)
+        else -> 0L
+    }
+
+    /** Feature strings are either "0x1234" or "0xLOW,0xHIGH". */
+    private fun parseFeatureString(text: String): Long {
+        val parts = text.split(",")
+        fun hex(s: String): Long = s.trim().removePrefix("0x").removePrefix("0X").toLongOrNull(16) ?: 0L
+        return when (parts.size) {
+            0 -> 0L
+            1 -> hex(parts[0])
+            else -> (hex(parts[1]) shl 32) or (hex(parts[0]) and 0xFFFFFFFFL)
+        }
+    }
+
+    private fun hasFeature(bit: Int): Boolean = (receiverFeatures shr bit) and 1L == 1L
 
     class HttpResponse(val code: Int, val headers: Map<String, String>, val body: ByteArray?)
 
@@ -129,20 +154,25 @@ class AirPlay2Client(
 
             val info = getInfo() ?: return false
             val statusFlags = info["statusFlags"] as? Long ?: 0L
-            Log.d(TAG, "Device info: flags=$statusFlags")
+            (info["deviceID"] as? String)?.let { if (it.isNotEmpty()) receiverDeviceId = it }
+            receiverFeatures = parseFeatures(info["features"])
+            receiverSourceVersion = info["sourceVersion"] as? String ?: ""
 
             if (deviceEd25519PubKey == null && info["pk"] != null) {
                 val pkRaw = info["pk"]
                 deviceEd25519PubKey = when (pkRaw) {
                     is ByteArray -> pkRaw
-                    is String -> android.util.Base64.decode(pkRaw, android.util.Base64.NO_WRAP)
+                    is String -> try {
+                        android.util.Base64.decode(pkRaw, android.util.Base64.NO_WRAP)
+                    } catch (e: IllegalArgumentException) {
+                        null
+                    }
                     else -> null
                 }
-                if (deviceEd25519PubKey != null) {
-                    Log.d(TAG, "Device pk from /info, length=${deviceEd25519PubKey!!.size}")
-                }
             }
-            Log.d(TAG, "hasPk=${deviceEd25519PubKey != null}")
+            Log.d(TAG, "Receiver $receiverDeviceId flags=$statusFlags " +
+                "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
+                "hasPk=${deviceEd25519PubKey != null}")
 
             // If the device needs pairing, do pair-setup
             // Transient: no password → default to "3939" (matches owntone - see pair_homekit.c:1177)
