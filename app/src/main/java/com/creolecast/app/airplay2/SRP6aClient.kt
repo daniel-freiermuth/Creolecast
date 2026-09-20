@@ -15,6 +15,9 @@ class SRP6aClient(
         val N: BigInteger = SRP6StandardGroups.rfc5054_3072.n
         val g: BigInteger = SRP6StandardGroups.rfc5054_3072.g
         private const val PUBKEY_3072_SIZE = 384
+
+        /** tlvFlags value for transient pairing: uint32 LE 0x00000010. */
+        val TRANSIENT_FLAGS = byteArrayOf(0x10, 0x00, 0x00, 0x00)
     }
 
     private val digest = SHA512Digest()
@@ -32,11 +35,21 @@ class SRP6aClient(
         private set
     private var salt: ByteArray? = null
 
-    fun buildM1(): ByteArray {
-        return TlvUtil.build(
-            TlvUtil.TLV_STATE to byteArrayOf(1),
-            TlvUtil.TLV_METHOD to byteArrayOf(0)
+    /**
+     * M1. Transient pairing additionally carries the flags TLV; without it the
+     * receiver treats the exchange as full PIN pairing and rejects the empty
+     * password.
+     */
+    fun buildM1(transient: Boolean): ByteArray {
+        val base = arrayOf(
+            TlvUtil.TLV_METHOD to byteArrayOf(0),
+            TlvUtil.TLV_STATE to byteArrayOf(1)
         )
+        return if (transient) {
+            TlvUtil.build(*base, TlvUtil.TLV_FLAGS to TRANSIENT_FLAGS)
+        } else {
+            TlvUtil.build(*base)
+        }
     }
 
     fun processM2(m2Tlv: ByteArray): ByteArray? {

@@ -221,16 +221,16 @@ class AirPlay2Client(
     }
 
     private fun doPairSetup(effectivePassword: String?): Boolean {
-        Log.d(TAG, "Pair-setup: starting (password=${effectivePassword ?: "3939 (transient)"})")
-
         // Always try transient (HKP 4) first: this covers devices that show a PIN on screen
-        // (statusFlags bit 9). Fall back to full (HKP 3) only if transient is rejected with 470.
+        // (statusFlags bit 9). Fall back to full (HKP 3) only if transient is rejected.
         // Without a password, skip full pairing (nothing to authenticate with).
         for (attemptTransient in listOf(true, false)) {
-            val attemptPin = effectivePassword ?: if (attemptTransient) "3939" else return false
-            Log.d(TAG, "Pair-setup attempt: transient=$attemptTransient pin=$attemptPin")
+            // Transient pairing authenticates with an empty password; the PIN
+            // is only meaningful for full pairing.
+            val attemptPin = if (attemptTransient) "" else (effectivePassword ?: return false)
+            Log.d(TAG, "Pair-setup attempt: transient=$attemptTransient")
             val srp = SRP6aClient(attemptPin, "Pair-Setup", secureRandom)
-            val m1 = srp.buildM1()
+            val m1 = srp.buildM1(attemptTransient)
 
             val resp1 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m1, attemptTransient)
             Log.d(TAG, "Pair-setup M1 response: ${resp1.code}")
