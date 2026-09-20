@@ -60,7 +60,7 @@ class AirPlay2Client(
     var eventListener: EventListener? = null
 
     private val secureRandom = SecureRandom()
-    private val socket = Socket()
+    private var socket = Socket()
     private var output: OutputStream? = null
     private var input: InputStream? = null
     private var sessionUrl: String = ""
@@ -208,26 +208,7 @@ class AirPlay2Client(
                 "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
                 "hasPk=${deviceEd25519PubKey != null}")
 
-            // If the device needs pairing, do pair-setup
-            // Transient: no password → default to "3939" (matches owntone - see pair_homekit.c:1177)
-            // Full: password provided → use as-is
-            val effectivePassword = password
-            if (effectivePassword != null || needsPairing(statusFlags)) {
-                Log.d(TAG, "Pair-setup: starting")
-                if (!doPairSetup(effectivePassword)) {
-                    if (password == null) {
-                        throw NeedsPinException(host)
-                    }
-                    return false
-                }
-            }
-
-            // Pair-verify always runs: it is what derives the session keys and
-            // proves we hold the identity M5 registered.
-            if (!doPairVerify()) {
-                Log.e(TAG, "pair-verify failed")
-                return false
-            }
+            if (!establishPairing(statusFlags)) return false
 
             // PTP needs an encrypted session, feature bit 41 and a new enough
             // receiver; everything else falls back to NTP.
@@ -301,6 +282,73 @@ class AirPlay2Client(
         nameRegex.find(xml)?.let { result["name"] = it.groupValues[1] }
         modelRegex.find(xml)?.let { result["model"] = it.groupValues[1] }
         return result
+    }
+
+    /**
+     * Re-verify with a stored identity when we have one, and only fall back to
+     * a full pair-setup when that fails. A rejected pair-verify usually leaves
+     * the receiver's connection unusable, so re-pair on a fresh one.
+     */
+    private fun establishPairing(statusFlags: Long): Boolean {
+        if (credentialStore.load(receiverCredentialKey()) != null) {
+            if (doPairVerify()) return true
+            Log.w(TAG, "pair-verify with saved credentials failed, re-pairing")
+            credentialStore.clear(receiverCredentialKey())
+            credentials = null
+            reopenControlConnection()
+        }
+
+        if (password != null || needsPairing(statusFlags)) {
+            if (!doPairSetup(password)) {
+                if (password == null) {
+                    // Make the receiver show its PIN before the UI asks for it.
+                    startPinDisplay()
+                    throw NeedsPinException(host)
+                }
+                return false
+            }
+        }
+
+        if (!doPairVerify()) {
+            Log.e(TAG, "pair-verify failed")
+            credentialStore.clear(receiverCredentialKey())
+            return false
+        }
+        return true
+    }
+
+    /** Ask the receiver to display a pairing PIN. HTTP 453 means "accepted". */
+    private fun startPinDisplay() {
+        try {
+            val resp = sendRequest(
+                "POST /pair-pin-start RTSP/1.0", null, null,
+                listOf(
+                    "X-Apple-HKP" to HKP_SCREEN_CAPTURE.toString(),
+                    "X-Apple-SupportedPINLengths" to "4"
+                )
+            )
+            Log.d(TAG, "pair-pin-start: ${resp.code}")
+        } catch (e: Exception) {
+            Log.w(TAG, "pair-pin-start failed: ${e.message}")
+        }
+    }
+
+    /** Replace the control connection, resetting the HAP framing state with it. */
+    private fun reopenControlConnection() {
+        try { socket.close() } catch (_: Exception) {}
+        channelEncrypted = false
+        hapWriteKey = null
+        hapReadKey = null
+        hapWriteNonce = 0
+        hapReadNonce = 0
+        cseq = 0
+        sessionId = null
+        socket = Socket()
+        socket.connect(InetSocketAddress(host, port), 5000)
+        socket.tcpNoDelay = true
+        socket.soTimeout = 10000
+        output = socket.getOutputStream()
+        input = HapInputStream(socket.getInputStream())
     }
 
     private fun doPairSetup(effectivePassword: String?): Boolean {
