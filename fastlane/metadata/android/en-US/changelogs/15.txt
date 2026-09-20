@@ -1,0 +1,5 @@
+First release as CreoleCast, renumbered to 1.0.0.
+
+AirPlay 2 now works. The sender kept a different signing key for pair-setup than for pair-verify, so no handshake ever completed. It now holds one persistent pairing identity per receiver, encrypts the control channel, completes the FairPlay handshake, and negotiates PTP or NTP timing.
+
+Also: AirPlay 1, Snapcast, DLNA/UPnP and Google Cast, system-wide capture, metadata and artwork sync, and a quick settings tile.

@@ -1,0 +1,39 @@
+# Draft recipe for https://gitlab.com/fdroid/fdroiddata
+# Copy to metadata/com.creolecast.app.yml in a fork and open a merge request.
+# Validate locally first:  fdroid lint com.creolecast.app && fdroid readmeta
+#
+# `Binaries:` is the point of this file. F-Droid rebuilds each tag on its own
+# buildserver, compares the result to our GitHub release asset, and - only if
+# they match byte for byte apart from the signature - publishes OUR signed APK
+# instead of one signed by F-Droid. If the comparison ever fails, F-Droid
+# publishes nothing rather than falling back to its own signature.
+# See https://f-droid.org/docs/Reproducible_Builds/
+
+Categories:
+  - Multimedia
+  - Internet
+License: GPL-3.0-only
+AuthorName: Daniel Freiermuth
+SourceCode: https://github.com/daniel-freiermuth/AriaCast-app
+IssueTracker: https://github.com/daniel-freiermuth/AriaCast-app/issues
+Changelog: https://github.com/daniel-freiermuth/AriaCast-app/releases
+
+AutoName: CreoleCast
+
+RepoType: git
+Repo: https://github.com/daniel-freiermuth/AriaCast-app.git
+
+Binaries: https://github.com/daniel-freiermuth/AriaCast-app/releases/download/v%v/CreoleCast-%v.apk
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 15
+    commit: v1.0.0
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 1.0.0
+CurrentVersionCode: 15

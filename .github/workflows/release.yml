@@ -1,0 +1,156 @@
+name: Release
+
+# Tags and releases are driven by the version in app/build.gradle.kts, which is
+# also what F-Droid reads. Bump versionName + versionCode in a PR; merging it to
+# main creates the tag and publishes the release.
+#
+# The APK is built UNSIGNED by Gradle and signed afterwards with apksigner, so
+# the unsigned artifact stays byte-identical to what the F-Droid buildserver
+# produces from the same commit. That is what lets the fdroiddata recipe use
+# `Binaries:` and publish our signature instead of F-Droid's. Do not move
+# signing into a Gradle signingConfig.
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag on version change
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.check.outputs.created }}
+      version: ${{ steps.check.outputs.version }}
+      version_code: ${{ steps.check.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version and tag if new
+        id: check
+        run: |
+          set -euo pipefail
+          gradle_file=app/build.gradle.kts
+          version=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$gradle_file")
+          version_code=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9]\+\).*/\1/p' "$gradle_file")
+
+          if [ -z "$version" ] || [ -z "$version_code" ]; then
+            echo "::error::could not parse versionName/versionCode from $gradle_file"
+            exit 1
+          fi
+          echo "versionName=$version versionCode=$version_code"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "tag v$version already exists, nothing to release"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ ! -f "fastlane/metadata/android/en-US/changelogs/$version_code.txt" ]; then
+            echo "::error::missing fastlane/metadata/android/en-US/changelogs/$version_code.txt"
+            echo "::error::F-Droid names changelogs by versionCode, not versionName"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$version" -m "CreoleCast $version"
+          git push origin "v$version"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build signed APK
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - run: chmod +x gradlew
+
+      # No keystore.properties is written, so the Gradle signingConfig stays
+      # inactive and the output is the reproducible unsigned APK.
+      - name: Build unsigned release APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Sign with apksigner
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+          build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          unsigned=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          out="app/build/outputs/apk/release/CreoleCast-${{ needs.tag.outputs.version }}.apk"
+
+          # F-Droid copies the signature onto its own build, so the payload must
+          # be aligned identically before signing.
+          "$build_tools/zipalign" -p -f 4 "$unsigned" "$out"
+          "$build_tools/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.keystore" \
+            --ks-pass "env:KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "env:KEY_PASSWORD" \
+            "$out"
+          "$build_tools/apksigner" verify --print-certs "$out"
+
+          sha256sum "$out" | tee "$out.sha256"
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: |
+            app/build/outputs/apk/release/CreoleCast-*.apk
+            app/build/outputs/apk/release/CreoleCast-*.apk.sha256
+
+  release:
+    name: Publish GitHub release
+    needs: [ tag, build ]
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-apk
+          path: dist
+
+      # IzzyOnDroid scrapes this release; F-Droid's `Binaries:` URL points at
+      # the APK asset. Both need the filename to stay predictable.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="fastlane/metadata/android/en-US/changelogs/${{ needs.tag.outputs.version_code }}.txt"
+          gh release create "v${{ needs.tag.outputs.version }}" \
+            --title "CreoleCast ${{ needs.tag.outputs.version }}" \
+            --notes-file "$notes" \
+            dist/*
