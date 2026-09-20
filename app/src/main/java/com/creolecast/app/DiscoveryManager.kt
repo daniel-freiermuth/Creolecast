@@ -217,6 +217,7 @@ class DiscoveryManager(
         }
         if (prefs.getBoolean("snapcast_enabled", false)) {
             services.add("_snapcast-ctrl._tcp")
+            services.add("_snapcast-jsonrpc._tcp")
         }
 
         discoveryJob = scope.launch {
