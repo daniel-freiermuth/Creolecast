@@ -45,6 +45,7 @@ class AirPlay2Client(
         private const val SOURCE_VERSION_PTP = "980.71.1"
 
         /** Receiver feature bits. */
+        private const val FEATURE_FPSAP = 14
         private const val FEATURE_PTP = 41
         private const val FEATURE_STREAM_CONNECTIONS = 59
 
@@ -233,6 +234,8 @@ class AirPlay2Client(
             usePtp = channelEncrypted && hasFeature(FEATURE_PTP) &&
                 supportsPtpSourceVersion(receiverSourceVersion)
             Log.d(TAG, "Negotiated timing=${if (usePtp) "PTP" else "NTP"}")
+
+            if (hasFeature(FEATURE_FPSAP) && !doFairPlaySetup()) return false
 
             if (!sendSetupSession()) return false
             if (!sendRecord()) return false
@@ -484,6 +487,33 @@ class AirPlay2Client(
         supportsEncryption = true
         Log.d(TAG, "Pair-verify complete, control channel encrypted")
         return true
+    }
+
+    /**
+     * FairPlay SAP. Receivers advertising feature bit 14 reject SETUP with
+     * RTSP 455 until /fp-setup completes. It proves the sender runs genuine
+     * client code; on an encrypted session the audio key is still our own shk.
+     */
+    private fun doFairPlaySetup(): Boolean {
+        return try {
+            val session = FairPlaySapSession(secureRandom)
+            val header = listOf("X-Apple-ET" to "32")
+            val r1 = sendRequest("POST /fp-setup RTSP/1.0", "application/octet-stream", session.message1(), header)
+            if (r1.code == 404) {
+                Log.w(TAG, "/fp-setup missing despite the FPSAP feature bit; continuing")
+                return true
+            }
+            if (r1.code != 200) { Log.e(TAG, "fp-setup m1 failed: ${r1.code}"); return false }
+            val m3 = session.exchangeM3(r1.body ?: return false)
+            val r2 = sendRequest("POST /fp-setup RTSP/1.0", "application/octet-stream", m3, header)
+            if (r2.code != 200) { Log.e(TAG, "fp-setup m3 failed: ${r2.code}"); return false }
+            session.finish(r2.body ?: return false)
+            Log.d(TAG, "FairPlay SAP handshake complete")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "FairPlay SAP failed", e)
+            false
+        }
     }
 
     private fun sendSetupSession(): Boolean {
