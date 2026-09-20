@@ -13,7 +13,7 @@
   <li><b>AriaCast:</b> Protocol using binary WebSockets for low-latency, high-fidelity audio with rich metadata sync.</li>
   <li><b>snapcast:</b></li>
   <li><b>AirPlay 1:</b> Seamless streaming to legacy Apple devices and Hi-Fi speakers.</li>
-  <li><b>AirPlay 2:</b> Encrypted streaming (HomeKit pairing) to Macs, Apple TVs and HomePods, with live metadata, artwork and volume sync. WIP</li>
+  <li><b>AirPlay 2:</b> Encrypted streaming to Macs, Apple TVs and HomePods &mdash; HomeKit transient or PIN pairing with a persistent device identity, FairPlay SAP, an encrypted control channel, PTP/NTP timing and live metadata, artwork and volume sync.</li>
   <li><b>DLNA / UPnP:</b> Universal compatibility with Smart TVs, AV Receivers, and media boxes.</li>
 </ul>
 
