@@ -56,6 +56,7 @@ import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import org.json.JSONObject
 import com.creolecast.app.airplay2.AirPlay2Client
+import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
 import com.creolecast.app.raop.AudioResampler
 import com.creolecast.app.raop.RaopCrypto
@@ -795,7 +796,8 @@ class AudioCastService : Service() {
                     channels = 2,
                     frameSize = AP2_ALAC_FRAME_SIZE,
                     password = pin,
-                    txtPk = txtPk
+                    txtPk = txtPk,
+                    credentialStore = AndroidCredentialStore(securePreferences)
                 )
 
                 ap2Client.eventListener = object : AirPlay2Client.EventListener {

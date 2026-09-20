@@ -27,7 +27,8 @@ class AirPlay2Client(
     private val channels: Int = 2,
     private val frameSize: Int = 352,
     private val password: String? = null,
-    private val txtPk: ByteArray? = null
+    private val txtPk: ByteArray? = null,
+    private val credentialStore: AirPlay2CredentialStore = InMemoryCredentialStore()
 ) {
     interface EventListener {
         fun onVolumeChange(db: Double) {}
@@ -73,6 +74,21 @@ class AirPlay2Client(
     private var deviceEd25519PubKey: ByteArray? = null
     private var sessionId: String? = null
     private var didTransientPairing = false
+    private var credentials: AirPlay2Credentials? = null
+
+    /**
+     * The long-term identity this sender presents to the receiver. Loaded from
+     * the store on first use so pair-setup M5 and pair-verify M3 always sign
+     * with the same key, across connections.
+     */
+    private fun pairingCredentials(): AirPlay2Credentials {
+        credentials?.let { return it }
+        val loaded = credentialStore.load(receiverCredentialKey()) ?: AirPlay2Credentials.generate()
+        credentials = loaded
+        return loaded
+    }
+
+    private fun receiverCredentialKey(): String = host
 
     @Volatile private var running = false
     private var syncThread: Thread? = null
@@ -227,15 +243,18 @@ class AirPlay2Client(
                     Log.e(TAG, "pair-setup M4 verification failed"); continue
                 }
 
+                // The key registered here is the one pair-verify M3 must sign
+                // with, so it has to be the persisted identity, not a fresh
+                // throwaway pair.
                 if (!attemptTransient) {
-                    val ed25519KeyPair = AirPlay2Crypto.generateEd25519KeyPair()
-                    val deviceIdHex = deviceId.replace(":", "")
-                    val m5 = srp.buildM5(ed25519KeyPair, deviceIdHex) ?: continue
+                    val creds = pairingCredentials()
+                    val m5 = srp.buildM5(creds) ?: continue
                     val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, false)
                     if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
                     val serverKey = srp.verifyM6(resp3.body ?: return false)
                     if (serverKey == null) { Log.e(TAG, "pair-setup M6 verification failed"); continue }
                     deviceEd25519PubKey = serverKey
+                    credentialStore.save(receiverCredentialKey(), creds)
                 }
 
                 sharedSecret = srp.sharedKeyBytes
@@ -334,15 +353,15 @@ class AirPlay2Client(
             Log.w(TAG, "No server Ed25519 public key, skipping M2 signature verification")
         }
 
-        // Build M3: TLV{Identifier: our_device_id, Signature: ed25519(client_eph_pub || device_id || server_eph_pub)}
-        val deviceIdHex = deviceId.replace(":", "")
-        val deviceIdBytes = deviceIdHex.toByteArray(Charsets.UTF_8)
-        val edKeyPair = AirPlay2Crypto.generateEd25519KeyPair()
-        val m3SignData = clientPub + deviceIdBytes + serverPubKey
-        val m3Sig = AirPlay2Crypto.ed25519Sign(edKeyPair, m3SignData)
+        // Build M3: TLV{Identifier, Signature: ed25519(client_eph_pub || identifier || server_eph_pub)}
+        // signed with the long-term key pair-setup M5 registered.
+        val creds = pairingCredentials()
+        val identifier = creds.pairingId.toByteArray(Charsets.UTF_8)
+        val m3SignData = clientPub + identifier + serverPubKey
+        val m3Sig = AirPlay2Crypto.ed25519SignWithSeed(creds.ed25519Seed, m3SignData)
 
         val m3DeviceInfoTlv = TlvUtil.build(
-            TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
+            TlvUtil.TLV_IDENTIFIER to identifier,
             TlvUtil.TLV_SIGNATURE to m3Sig
         )
 

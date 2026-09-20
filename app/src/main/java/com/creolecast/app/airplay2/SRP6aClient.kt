@@ -122,23 +122,28 @@ class SRP6aClient(
         return expectedM2.contentEquals(serverProof)
     }
 
-    fun buildM5(ed25519KeyPair: AsymmetricCipherKeyPair, deviceId: String): ByteArray? {
+    /**
+     * M5: register our long-term Ed25519 identity with the receiver. The key
+     * pair must be the persisted one, because pair-verify M3 signs with it on
+     * every later connection.
+     */
+    fun buildM5(credentials: AirPlay2Credentials): ByteArray? {
         val k = sharedKeyBytes ?: return null
-        val edPub = AirPlay2Crypto.getEd25519PublicKey(ed25519KeyPair)
+        val edPub = credentials.ed25519Public
         val saltSet = "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8)
         val infoSet = "Pair-Setup-Encrypt-Info".toByteArray(Charsets.UTF_8)
         val encKey = AirPlay2Crypto.hkdfSha512(saltSet, k, infoSet, 32)
 
-        // Build device info: {Identifier: device_id, Signature: ed25519_sign(device_x || device_id || public_key)}
+        // Build device info: {Identifier, Signature: ed25519_sign(device_x || identifier || public_key)}
         val deviceX = AirPlay2Crypto.hkdfSha512(
             "Pair-Setup-Controller-Sign-Salt".toByteArray(),
             k,
             "Pair-Setup-Controller-Sign-Info".toByteArray(),
             32
         )
-        val deviceIdBytes = deviceId.toByteArray(Charsets.UTF_8)
+        val deviceIdBytes = credentials.pairingId.toByteArray(Charsets.UTF_8)
         val signData = deviceX + deviceIdBytes + edPub
-        val signature = AirPlay2Crypto.ed25519Sign(ed25519KeyPair, signData)
+        val signature = AirPlay2Crypto.ed25519SignWithSeed(credentials.ed25519Seed, signData)
 
         val deviceInfoTlv = TlvUtil.build(
             TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
