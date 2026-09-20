@@ -18,8 +18,20 @@ permissions:
   contents: write
 
 jobs:
+  # Nothing is tagged or published unless tests, lint and a plain build all
+  # pass first. These are the same reusable workflows PRs run.
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  verify-build:
+    uses: ./.github/workflows/build.yml
+
   tag:
     name: Tag on version change
+    needs: [ tests, lint, verify-build ]
     runs-on: ubuntu-latest
     outputs:
       created: ${{ steps.check.outputs.created }}
