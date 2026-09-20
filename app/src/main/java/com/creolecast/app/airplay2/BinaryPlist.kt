@@ -163,10 +163,13 @@ object BinaryPlist {
         }
     }
 
-    /**
-     * Control SETUP session descriptor. NTP sessions advertise a sender-side
-     * timing port; PTP sessions instead identify the sender as a timing peer.
-     */
+    // Divergence from the Go reference /tmp/doubletake/internal/airplay/mirror.go
+    // (sessionPlist/controlPlist at :256-293, audio stream descriptor at :755-766
+    // and addScreenAudioStreamFields at :1123-1135): that sender mirrors the
+    // screen, so it also emits isScreenMirroringSession, usingScreen and
+    // isMedia=false. This app streams audio only, so it omits the screen keys and
+    // declares the audio stream as the main media instead.
+
     fun makeSessionPlist(
         sessionUuid: UUID,
         deviceId: String,
@@ -188,6 +191,8 @@ object BinaryPlist {
         session["model"] = model
         session["name"] = name
         if (timingProtocol == "PTP") {
+            // PTP receivers match the sender by peer identity instead of a
+            // sender-side timing port (mirror.go:270-277).
             val peer = linkedMapOf<String, Any?>(
                 "ID" to (timingPeerId ?: deviceId),
                 "SupportsClockPortMatchingOverride" to true,
@@ -306,8 +311,8 @@ object BinaryPlist {
 
     /**
      * Audio stream descriptor. Receivers advertising feature bit 59 take the
-     * `streamConnections` form and reject a top-level `controlPort`; older
-     * ones require the reverse.
+     * `streamConnections` form and reject a top-level `controlPort`; older ones
+     * require the reverse (mirror.go `addScreenAudioStreamFields`).
      */
     fun makeStreamPlist(
         controlPort: Int,
@@ -333,6 +338,8 @@ object BinaryPlist {
             stream["shk"] = shk
         }
         if (useStreamConnections) {
+            // isMedia is true here where the reference sends false: this stream
+            // is the session's main media, not a screen-mirroring side channel.
             stream["isMedia"] = true
             stream["supportsDynamicStreamID"] = true
             stream["streamConnections"] = linkedMapOf<String, Any?>(

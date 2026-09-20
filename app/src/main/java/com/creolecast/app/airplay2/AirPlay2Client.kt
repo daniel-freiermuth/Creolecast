@@ -1,8 +1,6 @@
 package com.creolecast.app.airplay2
 
 import android.util.Log
-import org.bouncycastle.crypto.AsymmetricCipherKeyPair
-import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -17,6 +15,18 @@ import kotlin.concurrent.thread
 
 class NeedsPinException(val host: String) : Exception("PIN needed for host $host")
 
+/**
+ * AirPlay 2 audio sender.
+ *
+ * The protocol details are transcribed from the Go reference implementation the
+ * F-Droid app "Mirror" (jqssun/android-display-mirror) uses through its
+ * `doubletake` submodule: `internal/airplay/{pairing,client,mirror,audio}.go`.
+ * Both projects are (L)GPL-3 licensed.
+ *
+ * Deviation from the reference: it streams *screen mirroring* audio, so it sets
+ * `isScreenMirroringSession`/`usingScreen` and negotiates a video stream. This
+ * client streams audio only and omits those.
+ */
 class AirPlay2Client(
     private val host: String,
     private val port: Int,
@@ -24,7 +34,6 @@ class AirPlay2Client(
     private val dacpId: String,
     private val activeRemote: String,
     private val sampleRate: Int = 44100,
-    private val channels: Int = 2,
     private val frameSize: Int = 352,
     private val password: String? = null,
     private val txtPk: ByteArray? = null,
@@ -38,23 +47,24 @@ class AirPlay2Client(
 
     companion object {
         private const val TAG = "AirPlay2Client"
-        private const val PUBKEY_3072_SIZE = 384
-        private const val HAP_FRAME_SIZE = 1024
+
+        /** X-Apple-HKP values (pairing.go pairingType* constants). */
+        private const val HKP_LEGACY = 3
+        private const val HKP_TRANSIENT = 4
+        private const val HKP_SCREEN_CAPTURE = 5
+
         private const val USER_AGENT = "AirPlay/935.7.1"
         private const val SOURCE_VERSION_NTP = "280.33"
         private const val SOURCE_VERSION_PTP = "980.71.1"
+        private const val HAP_FRAME_SIZE = 1024
 
-        /** Receiver feature bits. */
+        /** Receiver feature bits (discovery.go). */
         private const val FEATURE_FPSAP = 14
         private const val FEATURE_PTP = 41
         private const val FEATURE_STREAM_CONNECTIONS = 59
 
-        /** 85 ms at 44100 Hz, truncated. */
+        /** 85 ms at 44100 Hz, truncated — latency.go samplesFor44k1. */
         private const val LATENCY_SAMPLES = 3748
-
-        /** X-Apple-HKP pairing types. */
-        private const val HKP_TRANSIENT = 4
-        private const val HKP_SCREEN_CAPTURE = 5
     }
 
     var eventListener: EventListener? = null
@@ -74,7 +84,6 @@ class AirPlay2Client(
     private var eventSocket: Socket? = null
     private var eventPort = 0
 
-    private var timingRemotePort = 0
     private var controlRemotePort = 0
     private var audioRemotePort = 0
 
@@ -83,42 +92,25 @@ class AirPlay2Client(
     private var syncPacketSent = false
     private val ssrc = secureRandom.nextInt().toUInt().toLong()
 
-    private var sharedSecret: ByteArray? = null
-    private var ecdhKeyPair: AsymmetricCipherKeyPair? = null
-    private var cipherKeys: AirPlay2Crypto.PairKeysResult? = null
-    private var supportsEncryption = false
+    /** Receiver identity from /info; the key our pairing credentials are stored under. */
+    private var receiverDeviceId: String = host
+    private var lastStatusFlags = 0L
     private var deviceEd25519PubKey: ByteArray? = null
-    private var sessionId: String? = null
-    private var didTransientPairing = false
     private var credentials: AirPlay2Credentials? = null
+    private var sessionId: String? = null
+    private var pairType = HKP_TRANSIENT
 
-    /**
-     * The long-term identity this sender presents to the receiver. Loaded from
-     * the store on first use so pair-setup M5 and pair-verify M3 always sign
-     * with the same key, across connections.
-     */
-    private fun pairingCredentials(): AirPlay2Credentials {
-        credentials?.let { return it }
-        val loaded = credentialStore.load(receiverCredentialKey()) ?: AirPlay2Credentials.generate()
-        credentials = loaded
-        return loaded
-    }
-
-    private fun receiverCredentialKey(): String = receiverDeviceId
-
-    @Volatile private var running = false
-    private var syncThread: Thread? = null
-    private var keepAliveThread: Thread? = null
-    private var timingThread: Thread? = null
-
-    /** Negotiated timing protocol and the receiver's PTP clock identity. */
-    private var usePtp = false
-    private var ptpTimelineId = 0L
-    private var useStreamConnections = false
-
-    /** Audio stream key published as `shk`; null means audio goes out in the clear. */
+    /** Audio stream key published as `shk`; null means the audio goes out in the clear. */
     private var audioKey: ByteArray? = null
     private var audioNonceCounter = 0L
+
+    /** Negotiated receiver capabilities. */
+    private var receiverFeatures = 0L
+    private var receiverSourceVersion = ""
+    private var usePtp = false
+    private var useStreamConnections = false
+    private var ptpTimelineId = 0L
+
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
     private var channelEncrypted = false
@@ -127,94 +119,37 @@ class AirPlay2Client(
     private var hapWriteNonce = 0L
     private var hapReadNonce = 0L
 
-    /** Receiver identity and capabilities from /info. */
-    private var receiverDeviceId: String = host
-    private var receiverFeatures = 0L
-    private var receiverSourceVersion = ""
-
-    private fun parseFeatures(value: Any?): Long = when (value) {
-        is Long -> value
-        is Int -> value.toLong()
-        is String -> parseFeatureString(value)
-        else -> 0L
-    }
-
-    /** Feature strings are either "0x1234" or "0xLOW,0xHIGH". */
-    private fun parseFeatureString(text: String): Long {
-        val parts = text.split(",")
-        fun hex(s: String): Long = s.trim().removePrefix("0x").removePrefix("0X").toLongOrNull(16) ?: 0L
-        return when (parts.size) {
-            0 -> 0L
-            1 -> hex(parts[0])
-            else -> (hex(parts[1]) shl 32) or (hex(parts[0]) and 0xFFFFFFFFL)
-        }
-    }
-
-    private fun hasFeature(bit: Int): Boolean = (receiverFeatures shr bit) and 1L == 1L
-
-    /** PTP needs SourceVersion >= 354.54.6; 377.40.x advertises it but is broken. */
-    private fun supportsPtpSourceVersion(version: String): Boolean {
-        if (version.isEmpty()) return false
-        val parts = version.split(".").map { it.toIntOrNull() ?: return false }
-        if (parts.size >= 2 && parts[0] == 377 && parts[1] == 40) return false
-        val minimum = listOf(354, 54, 6)
-        for (i in minimum.indices) {
-            val actual = parts.getOrElse(i) { 0 }
-            if (actual > minimum[i]) return true
-            if (actual < minimum[i]) return false
-        }
-        return true
-    }
+    @Volatile private var running = false
+    private var syncThread: Thread? = null
+    private var keepAliveThread: Thread? = null
+    private var timingThread: Thread? = null
 
     class HttpResponse(val code: Int, val headers: Map<String, String>, val body: ByteArray?)
 
     fun connect(): Boolean {
         try {
-            socket.connect(InetSocketAddress(host, port), 5000)
-            socket.tcpNoDelay = true
-            socket.soTimeout = 10000
-            output = socket.getOutputStream()
-            input = HapInputStream(socket.getInputStream())
-            // The session is addressed by the receiver's own host and port plus
-            // the stream connection id, not by the sender's local address.
+            // The reference addresses the session by the receiver's own address and
+            // the stream connection id, not by the sender's local address
+            // (mirror.go:483).
             sessionUrl = "rtsp://$host:$port/$streamConnectionId"
             sequence = secureRandom.nextInt(0xFFFF)
             rtpTimestamp = secureRandom.nextInt()
 
             if (txtPk != null) {
                 deviceEd25519PubKey = txtPk
-                Log.d(TAG, "Device pk from TXT, length=${txtPk.size}")
             }
 
-            val info = getInfo() ?: return false
-            val statusFlags = info["statusFlags"] as? Long ?: 0L
-            (info["deviceID"] as? String)?.let { if (it.isNotEmpty()) receiverDeviceId = it }
-            receiverFeatures = parseFeatures(info["features"])
-            receiverSourceVersion = info["sourceVersion"] as? String ?: ""
+            openControlConnection()
+            if (!readReceiverInfo()) return false
+            if (!establishPairing()) return false
 
-            if (deviceEd25519PubKey == null && info["pk"] != null) {
-                val pkRaw = info["pk"]
-                deviceEd25519PubKey = when (pkRaw) {
-                    is ByteArray -> pkRaw
-                    is String -> try {
-                        android.util.Base64.decode(pkRaw, android.util.Base64.NO_WRAP)
-                    } catch (e: IllegalArgumentException) {
-                        null
-                    }
-                    else -> null
-                }
-            }
-            Log.d(TAG, "Receiver $receiverDeviceId flags=$statusFlags " +
-                "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
-                "hasPk=${deviceEd25519PubKey != null}")
-
-            if (!establishPairing(statusFlags)) return false
-
-            // PTP needs an encrypted session, feature bit 41 and a new enough
-            // receiver; everything else falls back to NTP.
-            usePtp = channelEncrypted && hasFeature(FEATURE_PTP) &&
+            // Capability negotiation, mirroring compatibility.go
+            // selectTimingProtocol / audio connection layout.
+            usePtp = channelEncrypted &&
+                hasFeature(FEATURE_PTP) &&
                 supportsPtpSourceVersion(receiverSourceVersion)
-            Log.d(TAG, "Negotiated timing=${if (usePtp) "PTP" else "NTP"}")
+            useStreamConnections = hasFeature(FEATURE_STREAM_CONNECTIONS)
+            Log.d(TAG, "Negotiated timing=${if (usePtp) "PTP" else "NTP"} streamConnections=$useStreamConnections")
 
             if (hasFeature(FEATURE_FPSAP) && !doFairPlaySetup()) return false
 
@@ -241,78 +176,53 @@ class AirPlay2Client(
         }
     }
 
-    private fun needsPairing(statusFlags: Long): Boolean {
-        val bit2 = (statusFlags shr 2) and 1
-        val bit3 = (statusFlags shr 3) and 1
-        val bit9 = (statusFlags shr 9) and 1
-        return (bit2 or bit3 or bit9) != 0L
-    }
-
-    private fun getInfo(): Map<String, Any>? {
-        val resp = sendHttpRequest("GET", "/info", null, null)
-        if (resp.code != 200) return null
-        val body = resp.body ?: return null
-        Log.d(TAG, "GET /info body size=${body.size}, magic=${body.copyOf(8).toString(Charsets.UTF_8)}")
-        return try {
-            val result = BinaryPlist.decode(body)
-            Log.d(TAG, "Binary plist parsed, keys=${result.keys.joinToString(",")}")
-            if (result.containsKey("pk")) {
-                val pkVal = result["pk"]
-                Log.d(TAG, "pk type=${pkVal?.javaClass?.simpleName}, value=${if (pkVal is ByteArray) "ByteArray(${pkVal.size})" else pkVal}")
-            }
-            if (result.containsKey("statusFlags")) {
-                Log.d(TAG, "statusFlags=${result["statusFlags"]}")
-            }
-            result.toMutableMap() as Map<String, Any>
-        } catch (e: Exception) {
-            Log.e(TAG, "Binary plist parse failed: ${e.message}", e)
-            val bodyStr = body.toString(Charsets.UTF_8)
-            parseXmlPlist(bodyStr)
-        }
-    }
-
-    private fun parseXmlPlist(xml: String): Map<String, Any> {
-        val result = mutableMapOf<String, Any>()
-        val statusRegex = Regex("<key>statusFlags</key>\\s*<integer>(\\d+)</integer>", RegexOption.DOT_MATCHES_ALL)
-        val pkRegex = Regex("<key>pk</key>\\s*<data>\\s*([A-Za-z0-9+/=]+)\\s*</data>", RegexOption.DOT_MATCHES_ALL)
-        val nameRegex = Regex("<key>name</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
-        val modelRegex = Regex("<key>model</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
-        statusRegex.find(xml)?.let { result["statusFlags"] = it.groupValues[1].toLong() }
-        pkRegex.find(xml)?.let { result["pk"] = it.groupValues[1].replace(Regex("\\s+"), "") }
-        nameRegex.find(xml)?.let { result["name"] = it.groupValues[1] }
-        modelRegex.find(xml)?.let { result["model"] = it.groupValues[1] }
-        return result
-    }
+    // ---------------------------------------------------------------- pairing
 
     /**
-     * Re-verify with a stored identity when we have one, and only fall back to
-     * a full pair-setup when that fails. A rejected pair-verify usually leaves
-     * the receiver's connection unusable, so re-pair on a fresh one.
+     * Reuse the stored long-term identity when we have one, exactly as
+     * airplay2.go `setupAirPlay2` does: pair-verify with the saved keys, and
+     * only fall back to a fresh pair-setup when that verification fails.
      */
-    private fun establishPairing(statusFlags: Long): Boolean {
-        if (credentialStore.load(receiverCredentialKey()) != null) {
+    private fun establishPairing(): Boolean {
+        val saved = credentialStore.load(receiverDeviceId)
+        if (saved != null) {
+            credentials = saved
+            pairType = if (password != null) HKP_SCREEN_CAPTURE else HKP_TRANSIENT
             if (doPairVerify()) return true
             Log.w(TAG, "pair-verify with saved credentials failed, re-pairing")
-            credentialStore.clear(receiverCredentialKey())
-            credentials = null
-            reopenControlConnection()
+            credentialStore.clear(receiverDeviceId)
+            // A rejected pair-verify usually leaves the receiver's connection
+            // unusable, so start a fresh one before re-pairing (airplay2.go
+            // setupAirPlay2 reconnects on this path).
+            openControlConnection()
+            if (!readReceiverInfo()) return false
         }
 
-        if (password != null || needsPairing(statusFlags)) {
-            if (!doPairSetup(password)) {
-                if (password == null) {
-                    // Make the receiver show its PIN before the UI asks for it.
-                    startPinDisplay()
-                    throw NeedsPinException(host)
-                }
-                return false
+        val fresh = AirPlay2Credentials.generate()
+        credentials = fresh
+
+        if (!doPairSetup(password)) {
+            if (password == null) {
+                // Ask the receiver to show its PIN before the UI prompts for it,
+                // otherwise an Apple TV never displays one (pairing.go
+                // StartPINDisplay).
+                startPinDisplay()
+                throw NeedsPinException(host)
             }
+            return false
         }
 
         if (!doPairVerify()) {
-            Log.e(TAG, "pair-verify failed")
-            credentialStore.clear(receiverCredentialKey())
+            Log.e(TAG, "pair-verify failed after pair-setup")
             return false
+        }
+
+        // Transient pairings are ephemeral: the receiver forgets them when the
+        // session ends, so persisting them would only guarantee a failed
+        // pair-verify next time. The reference saves only PIN/password
+        // pairings (airplay2.go `_pair`).
+        if (pairType != HKP_TRANSIENT) {
+            credentialStore.save(receiverDeviceId, fresh)
         }
         return true
     }
@@ -320,10 +230,11 @@ class AirPlay2Client(
     /** Ask the receiver to display a pairing PIN. HTTP 453 means "accepted". */
     private fun startPinDisplay() {
         try {
+            pairType = HKP_SCREEN_CAPTURE
             val resp = sendRequest(
-                "POST /pair-pin-start RTSP/1.0", null, null,
+                "POST", "/pair-pin-start", null, null,
                 listOf(
-                    "X-Apple-HKP" to HKP_SCREEN_CAPTURE.toString(),
+                    "X-Apple-HKP" to pairType.toString(),
                     "X-Apple-SupportedPINLengths" to "4"
                 )
             )
@@ -333,8 +244,11 @@ class AirPlay2Client(
         }
     }
 
-    /** Replace the control connection, resetting the HAP framing state with it. */
-    private fun reopenControlConnection() {
+    /**
+     * Open (or replace) the RTSP control connection. Replacing it resets the
+     * HAP framing state, since the keys belong to the old session.
+     */
+    private fun openControlConnection() {
         try { socket.close() } catch (_: Exception) {}
         channelEncrypted = false
         hapWriteKey = null
@@ -351,176 +265,176 @@ class AirPlay2Client(
         input = HapInputStream(socket.getInputStream())
     }
 
-    private fun doPairSetup(effectivePassword: String?): Boolean {
-        // Always try transient (HKP 4) first: this covers devices that show a PIN on screen
-        // (statusFlags bit 9). Fall back to full (HKP 3) only if transient is rejected.
-        // Without a password, skip full pairing (nothing to authenticate with).
-        for (attemptTransient in listOf(true, false)) {
-            // Transient pairing authenticates with an empty password; the PIN
-            // is only meaningful for full pairing.
-            val attemptPin = if (attemptTransient) "" else (effectivePassword ?: return false)
-            Log.d(TAG, "Pair-setup attempt: transient=$attemptTransient")
-            val srp = SRP6aClient(attemptPin, "Pair-Setup", secureRandom)
-            val m1 = srp.buildM1(attemptTransient)
-
-            val hkpType = if (attemptTransient) HKP_TRANSIENT else HKP_SCREEN_CAPTURE
-            val resp1 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m1, hkpType)
-            Log.d(TAG, "Pair-setup M1 response: ${resp1.code}")
-            if (resp1.code == 200) {
-                val m3 = srp.processM2(resp1.body ?: return false) ?: return false
-                val resp2 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m3, hkpType)
-                if (resp2.code != 200) { Log.e(TAG, "pair-setup M3 failed: ${resp2.code}"); continue }
-
-                if (!srp.verifyM4(resp2.body ?: return false)) {
-                    Log.e(TAG, "pair-setup M4 verification failed"); continue
+    /** GET /info and cache everything later steps negotiate against. */
+    private fun readReceiverInfo(): Boolean {
+        val info = getInfo() ?: return false
+        lastStatusFlags = info["statusFlags"] as? Long ?: 0L
+        (info["deviceID"] as? String)?.let { if (it.isNotEmpty()) receiverDeviceId = it }
+        if (deviceEd25519PubKey == null) {
+            deviceEd25519PubKey = when (val pkRaw = info["pk"]) {
+                is ByteArray -> pkRaw
+                is String -> try {
+                    android.util.Base64.decode(pkRaw, android.util.Base64.NO_WRAP)
+                } catch (e: IllegalArgumentException) {
+                    null
                 }
-
-                // M5/M6 run for transient pairing too: M5 is what registers the
-                // long-term key that pair-verify then signs with. Only the
-                // persistence differs - a transient pairing is forgotten by the
-                // receiver when the session ends, so saving it would guarantee a
-                // failed pair-verify next time.
-                val creds = pairingCredentials()
-                val m5 = srp.buildM5(creds, includeScreenCaptureAcl = hkpType == HKP_SCREEN_CAPTURE) ?: continue
-                val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, hkpType)
-                if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
-                srp.verifyM6(resp3.body ?: return false)?.let { deviceEd25519PubKey = it }
-                if (!attemptTransient) {
-                    credentialStore.save(receiverCredentialKey(), creds)
-                }
-
-                sharedSecret = srp.sharedKeyBytes
-                if (sharedSecret != null) {
-                    didTransientPairing = attemptTransient
-                    Log.d(TAG, "Pair-setup complete (transient=$attemptTransient), shared secret length=${sharedSecret!!.size}")
-                    return true
-                }
-            } else if (resp1.code == 470) {
-                Log.d(TAG, "${if (attemptTransient) "Transient" else "Full"} pairing rejected (470), ${if (attemptTransient) "retrying with full" else "giving up"}")
-                continue
-            } else {
-                Log.e(TAG, "pair-setup M1 failed: ${resp1.code}")
-                return false
+                else -> null
             }
+        }
+        receiverFeatures = parseFeatures(info["features"])
+        receiverSourceVersion = info["sourceVersion"] as? String ?: ""
+        Log.d(TAG, "Receiver $receiverDeviceId flags=$lastStatusFlags " +
+            "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
+            "hasPk=${deviceEd25519PubKey != null}")
+        return true
+    }
+
+    /**
+     * Transient pairing first (no PIN), PIN pairing when we have one. Both run
+     * the full SRP M1..M6 exchange — the reference never skips M5/M6
+     * (pairing.go `completeSRPExchange`), because M5 is what registers our
+     * long-term key that pair-verify later signs with.
+     */
+    private fun doPairSetup(pin: String?): Boolean {
+        val attempts = if (pin != null) {
+            listOf(HKP_SCREEN_CAPTURE to pin, HKP_LEGACY to pin)
+        } else {
+            listOf(HKP_TRANSIENT to "")
+        }
+
+        for ((type, srpPin) in attempts) {
+            pairType = type
+            val transient = type == HKP_TRANSIENT
+            Log.d(TAG, "Pair-setup attempt: hkp=$type transient=$transient")
+
+            val srp = SRP6aClient(srpPin, "Pair-Setup", secureRandom)
+            val resp1 = sendPairingRequest("/pair-setup", srp.buildM1(transient))
+            if (resp1.code != 200) {
+                Log.e(TAG, "pair-setup M1 failed: ${resp1.code}")
+                continue
+            }
+            val m2 = resp1.body ?: continue
+            val m2Error = TlvUtil.parse(m2)[TlvUtil.TLV_ERROR]?.firstOrNull()
+            if (m2Error != null) {
+                Log.e(TAG, "pair-setup M2 error: ${m2Error[0].toInt()}")
+                continue
+            }
+
+            val m3 = srp.processM2(m2) ?: continue
+            val resp2 = sendPairingRequest("/pair-setup", m3)
+            if (resp2.code != 200) { Log.e(TAG, "pair-setup M3 failed: ${resp2.code}"); continue }
+            if (!srp.verifyM4(resp2.body ?: continue)) {
+                Log.e(TAG, "pair-setup M4 verification failed"); continue
+            }
+
+            val creds = credentials ?: return false
+            val m5 = srp.buildM5(creds, includeScreenCaptureAcl = type == HKP_SCREEN_CAPTURE) ?: continue
+            val resp3 = sendPairingRequest("/pair-setup", m5)
+            if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
+            if (!srp.verifyM6(resp3.body ?: continue)) {
+                Log.e(TAG, "pair-setup M6 reported an error"); continue
+            }
+
+            Log.d(TAG, "Pair-setup complete (hkp=$type)")
+            return true
         }
         Log.e(TAG, "Pair-setup: all attempts failed")
         return false
     }
 
+    /**
+     * HAP pair-verify (pairing.go `hapPairVerify`). M3 is signed with the
+     * persisted long-term key — the same one pair-setup M5 registered.
+     */
     private fun doPairVerify(): Boolean {
-        Log.d(TAG, "Pair-verify: starting")
+        val creds = credentials ?: return false
 
         val keyPair = AirPlay2Crypto.generateCurve25519KeyPair()
-        ecdhKeyPair = keyPair
         val clientPub = AirPlay2Crypto.getPublicKeyBytes(keyPair)
 
         val m1 = TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(1),
             TlvUtil.TLV_PUBLIC_KEY to clientPub
         )
-        val resp1 = sendHttpRequest("POST", "/pair-verify", "application/pairing+tlv8", m1)
-        Log.d(TAG, "pair-verify M1 response: ${resp1.code}")
+        val resp1 = sendPairingRequest("/pair-verify", m1, verify = true)
         if (resp1.code != 200) { Log.e(TAG, "pair-verify M1 failed: ${resp1.code}"); return false }
 
-        val respBody = resp1.body
-        if (respBody == null) { Log.e(TAG, "pair-verify M1 no body"); return false }
-        val parsed1 = TlvUtil.parse(respBody)
-        val stateByte = parsed1[TlvUtil.TLV_STATE]?.firstOrNull()?.get(0)
-        if (stateByte == null) { Log.e(TAG, "pair-verify M1 no state TLV"); return false }
-        if (stateByte != 2.toByte()) { Log.e(TAG, "pair-verify: unexpected state ${stateByte.toInt()}"); return false }
+        val parsed1 = TlvUtil.parse(resp1.body ?: return false)
+        if (parsed1[TlvUtil.TLV_ERROR]?.firstOrNull() != null) {
+            Log.e(TAG, "pair-verify M2 error"); return false
+        }
+        val serverPubKey = parsed1[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull() ?: return false
+        val encryptedData = parsed1[TlvUtil.TLV_ENCRYPTED_DATA]?.firstOrNull() ?: return false
+        if (encryptedData.size < 16) return false
 
-        val serverPubKey = parsed1[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull()
-        if (serverPubKey == null) { Log.e(TAG, "pair-verify M1 no public key TLV"); return false }
-        val encryptedData = parsed1[TlvUtil.TLV_ENCRYPTED_DATA]?.firstOrNull()
-        if (encryptedData == null) { Log.e(TAG, "pair-verify M1 no encrypted data TLV"); return false }
-
-        // ECDH shared = curve25519(client_eph_priv, server_eph_pub)
         val shared = AirPlay2Crypto.curve25519Agree(
-            keyPair.private as X25519PrivateKeyParameters, serverPubKey
+            keyPair.private as org.bouncycastle.crypto.params.X25519PrivateKeyParameters, serverPubKey
         )
 
-        // HKDF decrypt key: HKDF(shared, "Pair-Verify-Encrypt-Salt", "Pair-Verify-Encrypt-Info", 32)
-        val sessionKey = AirPlay2Crypto.hkdfSha512(
+        val verifyKey = AirPlay2Crypto.hkdfSha512(
             "Pair-Verify-Encrypt-Salt".toByteArray(Charsets.UTF_8),
             shared,
             "Pair-Verify-Encrypt-Info".toByteArray(Charsets.UTF_8),
             32
         )
 
-        // Fixed nonce: 00 00 00 00 "PV-Msg02"
-        val nonce = ByteArray(12)
-        System.arraycopy("PV-Msg02".toByteArray(Charsets.UTF_8), 0, nonce, 4, 8)
-
-        // Server response: ciphertext || tag (no nonce)
-        if (encryptedData.size < 16) { Log.e(TAG, "pair-verify M2 encrypted data too short"); return false }
+        val m2Nonce = ByteArray(12)
+        System.arraycopy("PV-Msg02".toByteArray(Charsets.UTF_8), 0, m2Nonce, 4, 8)
         val ciphertext = encryptedData.copyOfRange(0, encryptedData.size - 16)
         val tag = encryptedData.copyOfRange(encryptedData.size - 16, encryptedData.size)
 
         val decrypted = try {
-            AirPlay2Crypto.chacha20Poly1305Decrypt(sessionKey, nonce, ciphertext, ByteArray(0), tag)
+            AirPlay2Crypto.chacha20Poly1305Decrypt(verifyKey, m2Nonce, ciphertext, ByteArray(0), tag)
         } catch (e: Exception) {
-            Log.e(TAG, "pair-verify M2 decrypt failed", e); return false
-        }
-        Log.d(TAG, "M2 decrypted size=${decrypted.size}")
-
-        // Parse decrypted inner TLV: {Identifier, Signature}
-        val innerParsed = TlvUtil.parse(decrypted)
-        val serverId = innerParsed[TlvUtil.TLV_IDENTIFIER]?.firstOrNull()
-        val serverSignature = innerParsed[TlvUtil.TLV_SIGNATURE]?.firstOrNull()
-        if (serverId == null || serverSignature == null) {
-            Log.e(TAG, "pair-verify M2 missing identifier or signature in decrypted data")
+            // A tag mismatch means the peer did not derive the same shared
+            // secret, so the exchange is already unauthenticated — fail hard.
+            Log.e(TAG, "pair-verify M2 decrypt failed", e)
             return false
         }
-        Log.d(TAG, "M2 serverId=${serverId.toString(Charsets.UTF_8)} sigSize=${serverSignature.size}")
 
-        // Authenticate the receiver: signature over
-        // (server_eph_pub || server_id || client_eph_pub) against the long-term
-        // key from /info or the mDNS TXT record. A mismatch means we are not
-        // talking to the device we paired with, so it must be fatal.
-        val verifyInfo = serverPubKey + serverId + clientPub
-        val serverEd25519Pub = this.deviceEd25519PubKey
-        if (serverEd25519Pub != null && serverEd25519Pub.size == 32) {
-            if (!AirPlay2Crypto.ed25519Verify(serverEd25519Pub, verifyInfo, serverSignature)) {
+        // Authenticate the receiver when /info or the mDNS TXT record gave us
+        // its long-term key. The reference skips this because it keeps no
+        // accessory key; we have one, so we enforce it.
+        val serverLtpk = deviceEd25519PubKey
+        if (serverLtpk != null && serverLtpk.size == 32) {
+            val inner = TlvUtil.parse(decrypted)
+            val serverId = inner[TlvUtil.TLV_IDENTIFIER]?.firstOrNull()
+            val serverSig = inner[TlvUtil.TLV_SIGNATURE]?.firstOrNull()
+            if (serverId == null || serverSig == null) {
+                Log.e(TAG, "pair-verify M2 missing identifier/signature"); return false
+            }
+            val signed = serverPubKey + serverId + clientPub
+            if (!AirPlay2Crypto.ed25519Verify(serverLtpk, signed, serverSig)) {
                 Log.e(TAG, "pair-verify M2 server signature rejected")
                 return false
             }
-        } else {
-            Log.w(TAG, "No server Ed25519 public key, cannot authenticate receiver")
         }
 
-        // Build M3: TLV{Identifier, Signature: ed25519(client_eph_pub || identifier || server_eph_pub)}
-        // signed with the long-term key pair-setup M5 registered.
-        val creds = pairingCredentials()
         val identifier = creds.pairingId.toByteArray(Charsets.UTF_8)
         val m3SignData = clientPub + identifier + serverPubKey
         val m3Sig = AirPlay2Crypto.ed25519SignWithSeed(creds.ed25519Seed, m3SignData)
 
-        val m3DeviceInfoTlv = TlvUtil.build(
+        val m3Inner = TlvUtil.build(
             TlvUtil.TLV_IDENTIFIER to identifier,
             TlvUtil.TLV_SIGNATURE to m3Sig
         )
-
-        // Encrypt with fixed nonce: 00 00 00 00 "PV-Msg03"
         val m3Nonce = ByteArray(12)
         System.arraycopy("PV-Msg03".toByteArray(Charsets.UTF_8), 0, m3Nonce, 4, 8)
-        val (m3Ciphertext, m3Tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
-            sessionKey, m3Nonce, m3DeviceInfoTlv, ByteArray(0)
-        )
-        val m3Encrypted = m3Ciphertext + m3Tag
+        val (m3Ct, m3Tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(verifyKey, m3Nonce, m3Inner, ByteArray(0))
 
         val m3 = TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(3),
-            TlvUtil.TLV_ENCRYPTED_DATA to m3Encrypted
+            TlvUtil.TLV_ENCRYPTED_DATA to (m3Ct + m3Tag)
         )
-        Log.d(TAG, "pair-verify M3 request size=${m3.size}")
-        val resp3 = sendHttpRequest("POST", "/pair-verify", "application/pairing+tlv8", m3)
-        Log.d(TAG, "pair-verify M3 response: ${resp3.code}")
+        val resp3 = sendPairingRequest("/pair-verify", m3, verify = true)
         if (resp3.code != 200) { Log.e(TAG, "pair-verify M3 failed: ${resp3.code}"); return false }
+        resp3.body?.let { body ->
+            if (body.isNotEmpty() && TlvUtil.parse(body)[TlvUtil.TLV_ERROR]?.firstOrNull() != null) {
+                Log.e(TAG, "pair-verify M4 error"); return false
+            }
+        }
 
-        // From here the whole RTSP channel is HAP framed. The key labels are
-        // HKDF(shared, "Control-Salt", "Control-{Write,Read}-Encryption-Key");
-        // the previous "Pair-Verify-AES-Key" salt belongs to the unrelated raw
-        // (non-HAP) pair-verify variant.
+        // From here the whole RTSP channel is HAP framed (pairing.go:766-791).
         val controlSalt = "Control-Salt".toByteArray(Charsets.UTF_8)
         hapWriteKey = AirPlay2Crypto.hkdfSha512(
             controlSalt, shared, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32
@@ -531,37 +445,102 @@ class AirPlay2Client(
         hapWriteNonce = 0
         hapReadNonce = 0
         channelEncrypted = true
-        cipherKeys = AirPlay2Crypto.PairKeysResult(hapWriteKey!!, hapReadKey!!, 0L, 0L)
-        supportsEncryption = true
         Log.d(TAG, "Pair-verify complete, control channel encrypted")
         return true
     }
 
+    // ----------------------------------------------------------- capabilities
+
+    private fun parseFeatures(value: Any?): Long = when (value) {
+        is Long -> value
+        is Int -> value.toLong()
+        is String -> parseFeatureString(value)
+        else -> 0L
+    }
+
+    /** mDNS-style feature strings are either "0x1234" or "0xLOW,0xHIGH". */
+    private fun parseFeatureString(text: String): Long {
+        val parts = text.split(",")
+        fun hex(s: String): Long =
+            s.trim().removePrefix("0x").removePrefix("0X").toLongOrNull(16) ?: 0L
+        return when (parts.size) {
+            0 -> 0L
+            1 -> hex(parts[0])
+            else -> (hex(parts[1]) shl 32) or (hex(parts[0]) and 0xFFFFFFFFL)
+        }
+    }
+
+    private fun hasFeature(bit: Int): Boolean = (receiverFeatures shr bit) and 1L == 1L
+
     /**
-     * FairPlay SAP. Receivers advertising feature bit 14 reject SETUP with
-     * RTSP 455 until /fp-setup completes. It proves the sender runs genuine
-     * client code; on an encrypted session the audio key is still our own shk.
+     * PTP needs SourceVersion >= 354.54.6, and 377.40.x is a known-bad
+     * advertisement (compatibility.go supportsPTPSourceVersion).
+     */
+    private fun supportsPtpSourceVersion(version: String): Boolean {
+        if (version.isEmpty()) return false
+        val parts = version.split(".").map { it.toIntOrNull() ?: return false }
+        if (parts.size >= 2 && parts[0] == 377 && parts[1] == 40) return false
+        val minimum = listOf(354, 54, 6)
+        for (i in minimum.indices) {
+            val actual = parts.getOrElse(i) { 0 }
+            if (actual > minimum[i]) return true
+            if (actual < minimum[i]) return false
+        }
+        return true
+    }
+
+    /**
+     * FairPlay SAP. Receivers advertising bit 14 reject SETUP with RTSP 455
+     * until /fp-setup completes (fairplay.go FairPlaySetup).
      */
     private fun doFairPlaySetup(): Boolean {
         return try {
             val session = FairPlaySapSession(secureRandom)
             val header = listOf("X-Apple-ET" to "32")
-            val r1 = sendRequest("POST /fp-setup RTSP/1.0", "application/octet-stream", session.message1(), header)
+            val r1 = sendRequest("POST", "/fp-setup", "application/octet-stream", session.message1(), header)
             if (r1.code == 404) {
-                Log.w(TAG, "/fp-setup missing despite the FPSAP feature bit; continuing")
+                Log.w(TAG, "/fp-setup not implemented despite the FPSAP feature bit; continuing")
                 return true
             }
             if (r1.code != 200) { Log.e(TAG, "fp-setup m1 failed: ${r1.code}"); return false }
             val m3 = session.exchangeM3(r1.body ?: return false)
-            val r2 = sendRequest("POST /fp-setup RTSP/1.0", "application/octet-stream", m3, header)
+            val r2 = sendRequest("POST", "/fp-setup", "application/octet-stream", m3, header)
             if (r2.code != 200) { Log.e(TAG, "fp-setup m3 failed: ${r2.code}"); return false }
             session.finish(r2.body ?: return false)
+
             Log.d(TAG, "FairPlay SAP handshake complete")
             true
         } catch (e: Exception) {
             Log.e(TAG, "FairPlay SAP failed", e)
             false
         }
+    }
+
+    // ---------------------------------------------------------------- session
+
+    private fun getInfo(): Map<String, Any?>? {
+        val resp = sendRequest("GET", "/info", null, null)
+        if (resp.code != 200) return null
+        val body = resp.body ?: return null
+        return try {
+            BinaryPlist.decode(body)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binary plist parse failed: ${e.message}")
+            parseXmlPlist(body.toString(Charsets.UTF_8))
+        }
+    }
+
+    private fun parseXmlPlist(xml: String): Map<String, Any?> {
+        val result = mutableMapOf<String, Any?>()
+        val statusRegex = Regex("<key>statusFlags</key>\\s*<integer>(\\d+)</integer>", RegexOption.DOT_MATCHES_ALL)
+        val pkRegex = Regex("<key>pk</key>\\s*<data>\\s*([A-Za-z0-9+/=]+)\\s*</data>", RegexOption.DOT_MATCHES_ALL)
+        val deviceRegex = Regex("<key>deviceID</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
+        val nameRegex = Regex("<key>name</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
+        statusRegex.find(xml)?.let { result["statusFlags"] = it.groupValues[1].toLong() }
+        pkRegex.find(xml)?.let { result["pk"] = it.groupValues[1].replace(Regex("\\s+"), "") }
+        deviceRegex.find(xml)?.let { result["deviceID"] = it.groupValues[1] }
+        nameRegex.find(xml)?.let { result["name"] = it.groupValues[1] }
+        return result
     }
 
     private fun sendSetupSession(): Boolean {
@@ -581,7 +560,6 @@ class AirPlay2Client(
         if (resp.code != 200) { Log.e(TAG, "SETUP session failed: ${resp.code}"); return false }
         sessionId = resp.headers["Session"]?.substringBefore(";")?.trim()
             ?: sessionUuid.toString().uppercase()
-        parseTransportResponse(resp.headers["Transport"] ?: "")
         resp.body?.let { parseSessionResponse(it) }
         if (usePtp && ptpTimelineId == 0L) {
             Log.e(TAG, "PTP SETUP response omitted timingPeerInfo.ClockID")
@@ -600,11 +578,11 @@ class AirPlay2Client(
     }
 
     private fun sendSetupStream(): Boolean {
-        // The audio key is a fresh random 32-byte value published as `shk`; it
-        // is not derived from the pairing secret. Unencrypted sessions publish
-        // no key and stream in the clear.
+        // The reference publishes a fresh random ChaCha key as `shk` for
+        // encrypted sessions (mirror.go generateAudioChaChaKey); it is not
+        // derived from the pairing secret. Unencrypted sessions send no key and
+        // stream in the clear.
         val shk = if (channelEncrypted) ByteArray(32).also(secureRandom::nextBytes) else null
-        useStreamConnections = hasFeature(FEATURE_STREAM_CONNECTIONS)
 
         val plist = BinaryPlist.makeStreamPlist(
             controlPort = controlSocket.localPort,
@@ -641,13 +619,11 @@ class AirPlay2Client(
         }
 
         if (audioRemotePort <= 0) {
-            Log.e(TAG, "SETUP stream returned no data port")
+            Log.e(TAG, "SETUP stream returned no dataPort")
             return false
         }
 
         audioSocket = DatagramSocket(0)
-        // Audio is encrypted with the key we published, not with the control
-        // channel keys.
         audioKey = shk
         audioNonceCounter = 0
         Log.d(TAG, "Audio stream: data=$audioRemotePort ctrl=$controlRemotePort encrypted=${shk != null}")
@@ -671,24 +647,13 @@ class AirPlay2Client(
         }
     }
 
-    private fun parseTransportResponse(transport: String) {
-        transport.split(";").forEach { part ->
-            when {
-                part.trim().startsWith("server_port=") ->
-                    audioRemotePort = part.substringAfter("=").toIntOrNull() ?: 0
-                part.trim().startsWith("control_port=") ->
-                    controlRemotePort = part.substringAfter("=").toIntOrNull() ?: 0
-                part.trim().startsWith("timing_port=") ->
-                    timingRemotePort = part.substringAfter("=").toIntOrNull() ?: 0
-            }
-        }
-        Log.d(TAG, "Transport: audio=$audioRemotePort ctrl=$controlRemotePort timing=$timingRemotePort")
-    }
+    // ------------------------------------------------------------------ audio
 
     /**
-     * ALAC "verbatim" (uncompressed) frame: a 23-bit element header with
-     * hasSize set, the 32-bit sample count, each little-endian stereo sample
-     * byte-swapped to big-endian, then the 3-bit end tag.
+     * ALAC "verbatim" (uncompressed) frame, transcribed from audio.go
+     * `encodeALACVerbatim`: a 23-bit element header with hasSize set, the
+     * 32-bit sample count, each little-endian stereo sample byte-swapped to
+     * big-endian, then the 3-bit end tag.
      */
     private fun alacEncodeUncompressed(pcm: ByteArray): ByteArray {
         val samples = pcm.size / (2 * 2)
@@ -712,8 +677,8 @@ class AirPlay2Client(
             }
         }
 
-        // writeBits carries at most one byte boundary, so nothing wider than
-        // 8 bits may be written in a single call.
+        // writeBits carries at most one byte boundary, so nothing wider than 8
+        // bits may be written in a single call.
         writeBits(1, 3)          // tag: channel pair element (stereo)
         writeBits(0, 4)          // elementInstanceTag
         writeBits(0, 8)          // unused (12 bits, part 1)
@@ -746,6 +711,9 @@ class AirPlay2Client(
 
             val key = audioKey
             val datagram = if (key != null) {
+                // ChaCha20-Poly1305 with an 8-byte LE counter nonce, AAD = the
+                // RTP timestamp+SSRC bytes, nonce appended after the tag
+                // (audio.go sendAudioPacketWithSeqAndNonce).
                 val counter = synchronized(this) { audioNonceCounter++ }
                 val nonce = ByteArray(12)
                 for (i in 0..7) nonce[4 + i] = ((counter shr (i * 8)) and 0xFF).toByte()
@@ -757,6 +725,7 @@ class AirPlay2Client(
             } else {
                 packet
             }
+
             socket.send(DatagramPacket(datagram, datagram.size, InetAddress.getByName(host), audioRemotePort))
 
             sequence = (sequence + 1) and 0xFFFF
@@ -774,22 +743,15 @@ class AirPlay2Client(
         header[1] = 0x60.toByte()
         header[2] = ((sequence shr 8) and 0xFF).toByte()
         header[3] = (sequence and 0xFF).toByte()
-        val ts = rtpTimestamp
-        header[4] = ((ts shr 24) and 0xFF).toByte()
-        header[5] = ((ts shr 16) and 0xFF).toByte()
-        header[6] = ((ts shr 8) and 0xFF).toByte()
-        header[7] = (ts and 0xFF).toByte()
-        val ssrcInt = ssrc.toInt()
-        header[8] = ((ssrcInt shr 24) and 0xFF).toByte()
-        header[9] = ((ssrcInt shr 16) and 0xFF).toByte()
-        header[10] = ((ssrcInt shr 8) and 0xFF).toByte()
-        header[11] = (ssrcInt and 0xFF).toByte()
+        writeUInt32(header, 4, rtpTimestamp)
+        writeUInt32(header, 8, ssrc.toInt())
         return header + payload
     }
 
     /**
      * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
-     * 28 bytes / 0xd7 plus the receiver's timeline id for PTP.
+     * 28 bytes / 0xd7 plus the receiver's timeline id for PTP
+     * (audio.go sendSyncPacketAt).
      */
     private fun sendSyncPacket() {
         if (controlRemotePort <= 0) return
@@ -816,7 +778,7 @@ class AirPlay2Client(
         } catch (_: Exception) {}
     }
 
-    /** seconds.32 fixed point -> nanoseconds. */
+    /** seconds.32 fixed point -> nanoseconds (audio.go ptpNanoseconds). */
     private fun ptpNanoseconds(timestamp: Long): Long {
         val seconds = timestamp ushr 32
         val fraction = timestamp and 0xFFFFFFFFL
@@ -825,8 +787,8 @@ class AirPlay2Client(
 
     /**
      * Answer the receiver's NTP timing requests (0xd2) with 0xd3 responses.
-     * Without this an NTP receiver never establishes a media clock and stays
-     * silent.
+     * Without this the receiver never establishes a media clock and silently
+     * renders nothing (mirror.go NTP timing responder).
      */
     private fun startTimingResponder() {
         timingThread = thread(name = "ap2-timing", isDaemon = true) {
@@ -842,10 +804,12 @@ class AirPlay2Client(
                     response[1] = 0xD3.toByte()
                     response[2] = buf[2]
                     response[3] = buf[3]
-                    System.arraycopy(buf, 24, response, 8, 8)
+                    System.arraycopy(buf, 24, response, 8, 8)     // their transmit -> our reference
                     writeUInt64(response, 16, receiveTime)
                     writeUInt64(response, 24, currentNtpTime())
-                    timingSocket.send(DatagramPacket(response, response.size, request.address, request.port))
+                    timingSocket.send(
+                        DatagramPacket(response, response.size, request.address, request.port)
+                    )
                 } catch (e: Exception) {
                     if (running) Log.w(TAG, "timing responder: ${e.message}")
                 }
@@ -855,8 +819,7 @@ class AirPlay2Client(
 
     fun setVolume(db: Double) {
         val body = "volume: ${"%.6f".format(java.util.Locale.US, db)}\r\n"
-        val bodyBytes = body.toByteArray(Charsets.UTF_8)
-        sendRtspRequest("SET_PARAMETER", sessionUrl, "text/parameters", bodyBytes)
+        sendRtspRequest("SET_PARAMETER", sessionUrl, "text/parameters", body.toByteArray(Charsets.UTF_8))
     }
 
     fun sendMetadata(title: String?, artist: String?, album: String?, artworkBytes: ByteArray? = null) {
@@ -881,6 +844,8 @@ class AirPlay2Client(
         sendRtspRequest("SET_PARAMETER", sessionUrl, "text/parameters", body)
     }
 
+    // ------------------------------------------------------------ event channel
+
     private fun connectEventPort() {
         if (eventPort <= 0) return
         try {
@@ -897,9 +862,9 @@ class AirPlay2Client(
     private fun startEventReadLoop(s: Socket) {
         thread(name = "ap2-event", isDaemon = true) {
             try {
-                val input = s.getInputStream()
+                val stream = s.getInputStream()
                 while (running) {
-                    val msg = readEventMessage(input) ?: break
+                    val msg = readEventMessage(stream) ?: break
                     dispatchEventMessage(msg)
                 }
             } catch (e: Exception) {
@@ -953,7 +918,6 @@ class AirPlay2Client(
     }
 
     private fun dispatchEventMessage(msg: EventMessage) {
-        Log.d(TAG, "Event: ${msg.method} ct=${msg.headers["Content-Type"]}")
         val body = msg.body ?: return
         if (msg.headers["Content-Type"]?.contains("apple-binary-plist") != true) return
         try {
@@ -965,12 +929,10 @@ class AirPlay2Client(
                         is Long -> v.toDouble()
                         else -> return
                     }
-                    Log.d(TAG, "Event volume: $db dB")
                     eventListener?.onVolumeChange(db)
                 }
                 "command" -> {
                     val name = dict["name"] as? String ?: return
-                    Log.d(TAG, "Event command: $name")
                     eventListener?.onRemoteCommand(name)
                 }
             }
@@ -978,6 +940,8 @@ class AirPlay2Client(
             Log.w(TAG, "Event dispatch failed: ${e.message}")
         }
     }
+
+    // ---------------------------------------------------------------- lifecycle
 
     /** Best-effort graceful session end. Call before [close] where possible so the
      *  receiver drops the session immediately instead of waiting out its own timeout. */
@@ -999,12 +963,38 @@ class AirPlay2Client(
         try { socket.close() } catch (_: Exception) {}
     }
 
-    private fun sendHttpRequest(method: String, path: String, contentType: String?, body: ByteArray?): HttpResponse {
-        return sendRequest("$method $path RTSP/1.0", contentType, body)
+    private fun startSyncLoop() {
+        syncThread = thread(name = "ap2-sync", isDaemon = true) {
+            while (running) {
+                sendSyncPacket()
+                try { Thread.sleep(1000) } catch (e: InterruptedException) { return@thread }
+            }
+        }
     }
 
-    private fun sendPairingRequest(method: String, path: String, contentType: String?, body: ByteArray?, hkpType: Int): HttpResponse {
-        return sendRequest("$method $path RTSP/1.0", contentType, body, listOf("X-Apple-HKP" to hkpType.toString()))
+    /** POST /feedback every 2 s, matching the reference's feedbackLoop. */
+    private fun startKeepAliveLoop() {
+        keepAliveThread = thread(name = "ap2-keepalive", isDaemon = true) {
+            while (running) {
+                try { sendRequest("POST", "/feedback", null, null) } catch (_: Exception) {}
+                try { Thread.sleep(2000) } catch (e: InterruptedException) { return@thread }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------- wire
+
+    private fun sendPairingRequest(path: String, body: ByteArray, verify: Boolean = false): HttpResponse {
+        val headers = mutableListOf<Pair<String, String>>()
+        if (pairType == HKP_LEGACY) {
+            headers += "X-Apple-HKP" to HKP_LEGACY.toString()
+        } else {
+            headers += "X-Apple-Client-Name" to clientName
+            headers += "X-Apple-HKP" to pairType.toString()
+            credentials?.let { headers += "X-Apple-Client-ID" to it.pairingId }
+            if (verify) headers += "X-Apple-PD" to "1"
+        }
+        return sendRequest("POST", path, "application/octet-stream", body, headers)
     }
 
     private fun sendRtspRequest(
@@ -1014,15 +1004,36 @@ class AirPlay2Client(
         body: ByteArray?,
         extraHeaders: List<Pair<String, String>> = emptyList()
     ): HttpResponse {
-        return sendRequest("$method $url RTSP/1.0", contentType, body, extraHeaders)
+        val headers = mutableListOf(
+            "Client-Instance" to deviceId.replace(":", ""),
+            "DACP-ID" to dacpId,
+            "Active-Remote" to activeRemote
+        )
+        sessionId?.let { headers += "Session" to it }
+        headers += extraHeaders
+        return sendRequest(method, url, contentType, body, headers)
     }
 
-    private fun sendRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeaders: List<Pair<String, String>> = emptyList()): HttpResponse {
+    private fun sendRequest(
+        method: String,
+        target: String,
+        contentType: String?,
+        body: ByteArray?,
+        extraHeaders: List<Pair<String, String>> = emptyList()
+    ): HttpResponse {
         synchronized(this) {
             val out = output ?: return HttpResponse(0, emptyMap(), null)
-            val req = buildRequest(requestLine, contentType, body, extraHeaders)
-            // Headers and body are one plaintext blob for framing purposes.
-            val frame = req.toByteArray(Charsets.UTF_8) + (body ?: ByteArray(0))
+            val payload = body ?: ByteArray(0)
+            val sb = StringBuilder()
+            sb.append("$method $target RTSP/1.0\r\n")
+            sb.append("CSeq: ${++cseq}\r\n")
+            sb.append("User-Agent: $USER_AGENT\r\n")
+            for ((k, v) in extraHeaders) sb.append("$k: $v\r\n")
+            if (contentType != null && payload.isNotEmpty()) sb.append("Content-Type: $contentType\r\n")
+            sb.append("Content-Length: ${payload.size}\r\n")
+            sb.append("\r\n")
+
+            val frame = sb.toString().toByteArray(Charsets.UTF_8) + payload
             writeFramed(out, frame)
             out.flush()
             return readResponse()
@@ -1030,9 +1041,9 @@ class AirPlay2Client(
     }
 
     /**
-     * HAP framing: split the plaintext into 1024-byte chunks and send each as
-     * `[length LE16][ciphertext][16-byte tag]`, with the length prefix as AAD
-     * and an incrementing little-endian counter nonce.
+     * HAP framing: 1024-byte plaintext chunks, each `[len LE16][ciphertext][tag]`
+     * with the length prefix as AAD and an incrementing LE counter nonce
+     * (client.go:1100-1137).
      */
     private fun writeFramed(out: OutputStream, data: ByteArray) {
         if (!channelEncrypted) { out.write(data); return }
@@ -1106,25 +1117,6 @@ class AirPlay2Client(
         }
     }
 
-    private fun buildRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeaders: List<Pair<String, String>> = emptyList()): String {
-        val sb = StringBuilder()
-        sb.append("$requestLine\r\n")
-        sb.append("CSeq: ${++cseq}\r\n")
-        sb.append("User-Agent: $USER_AGENT\r\n")
-        sb.append("Client-Instance: ${deviceId.replace(":", "")}\r\n")
-        sb.append("DACP-ID: $dacpId\r\n")
-        sb.append("Active-Remote: $activeRemote\r\n")
-        if (sessionId != null) sb.append("Session: $sessionId\r\n")
-        for ((k, v) in extraHeaders) sb.append("$k: $v\r\n")
-        if (contentType != null && body != null && body.isNotEmpty()) {
-            sb.append("Content-Type: $contentType\r\n")
-        }
-        // Apple's senders always send Content-Length, even for empty bodies.
-        sb.append("Content-Length: ${body?.size ?: 0}\r\n")
-        sb.append("\r\n")
-        return sb.toString()
-    }
-
     private fun readResponse(): HttpResponse {
         val input = input ?: return HttpResponse(0, emptyMap(), null)
         val headers = linkedMapOf<String, String>()
@@ -1146,15 +1138,13 @@ class AirPlay2Client(
 
         if (headerLines.isEmpty()) return HttpResponse(0, emptyMap(), null)
 
-        val statusRegex = Regex("\\w+/\\d\\.\\d (\\d+)")
-        statusRegex.find(headerLines.first())?.let {
+        Regex("\\w+/\\d\\.\\d (\\d+)").find(headerLines.first())?.let {
             statusCode = it.groupValues[1].toIntOrNull() ?: 0
         }
 
         var contentLength = 0
         for (i in 1 until headerLines.size) {
-            val line = headerLines[i]
-            val parts = line.split(":", limit = 2)
+            val parts = headerLines[i].split(":", limit = 2)
             if (parts.size == 2) {
                 val key = parts[0].trim()
                 val value = parts[1].trim()
@@ -1195,34 +1185,8 @@ class AirPlay2Client(
     }
 
     private fun writeUInt64(buf: ByteArray, off: Int, v: Long) {
-        buf[off] = ((v shr 56) and 0xFF).toByte()
-        buf[off + 1] = ((v shr 48) and 0xFF).toByte()
-        buf[off + 2] = ((v shr 40) and 0xFF).toByte()
-        buf[off + 3] = ((v shr 32) and 0xFF).toByte()
-        buf[off + 4] = ((v shr 24) and 0xFF).toByte()
-        buf[off + 5] = ((v shr 16) and 0xFF).toByte()
-        buf[off + 6] = ((v shr 8) and 0xFF).toByte()
-        buf[off + 7] = (v and 0xFF).toByte()
+        for (i in 0..7) buf[off + i] = ((v shr ((7 - i) * 8)) and 0xFF).toByte()
     }
-
-    private fun startSyncLoop() {
-        syncThread = thread(name = "ap2-sync") {
-            while (running) { sendSyncPacket(); Thread.sleep(1000) }
-        }
-    }
-
-    /** POST /feedback every 2 s; the receiver's feedback timeout is far under 25 s. */
-    private fun startKeepAliveLoop() {
-        keepAliveThread = thread(name = "ap2-keepalive", isDaemon = true) {
-            while (running) {
-                try {
-                    sendHttpRequest("POST", "/feedback", null, null)
-                } catch (_: Exception) {}
-                try { Thread.sleep(2000) } catch (e: InterruptedException) { return@thread }
-            }
-        }
-    }
-
 
     operator fun ByteArray.plus(other: ByteArray): ByteArray {
         val result = ByteArray(this.size + other.size)

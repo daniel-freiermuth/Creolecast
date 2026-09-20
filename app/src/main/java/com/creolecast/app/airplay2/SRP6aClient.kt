@@ -1,11 +1,16 @@
 package com.creolecast.app.airplay2
 
-import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.agreement.srp.SRP6StandardGroups
 import org.bouncycastle.crypto.digests.SHA512Digest
 import java.math.BigInteger
 import java.security.SecureRandom
 
+/**
+ * SRP-6a (RFC 5054 3072-bit group, SHA-512) as HomeKit/AirPlay 2 uses it for
+ * `/pair-setup`. Transcribed from the Go reference implementation used by the
+ * F-Droid app "Mirror": doubletake `internal/airplay/pairing.go`, functions
+ * `pairSetupTransient` (M1) and `completeSRPExchange` (M3..M6).
+ */
 class SRP6aClient(
     private val pin: String,
     private val username: String = "Pair-Setup",
@@ -16,12 +21,12 @@ class SRP6aClient(
         val g: BigInteger = SRP6StandardGroups.rfc5054_3072.g
         private const val PUBKEY_3072_SIZE = 384
 
-        /** tlvFlags value for transient pairing: uint32 LE 0x00000010. */
-        val TRANSIENT_FLAGS = byteArrayOf(0x10, 0x00, 0x00, 0x00)
+        /** tlvFlags value for transient pairing: uint32 LE 0x00000010 (pairing.go:339-340). */
+        private val TRANSIENT_FLAGS = byteArrayOf(0x10, 0x00, 0x00, 0x00)
 
-        /** OPACK {"com.apple.ScreenCapture": true}, required by HKP type 5. */
-        val SCREEN_CAPTURE_ACL = byteArrayOf(0xE1.toByte(), 0x57) +
-            "com.apple.ScreenCapture".toByteArray(Charsets.UTF_8) + byteArrayOf(0x01)
+        /** OPACK `{"com.apple.ScreenCapture": true}` (pairing.go screenCaptureACL). */
+        private val SCREEN_CAPTURE_ACL =
+            byteArrayOf(0xE1.toByte(), 0x57) + "com.apple.ScreenCapture".toByteArray(Charsets.UTF_8) + byteArrayOf(0x01)
     }
 
     private val digest = SHA512Digest()
@@ -41,18 +46,21 @@ class SRP6aClient(
 
     /**
      * M1. Transient pairing additionally carries the flags TLV; without it the
-     * receiver treats the exchange as full PIN pairing and rejects the empty
-     * password.
+     * receiver treats the exchange as a full PIN pairing and rejects the empty
+     * password (pairing.go:337-352).
      */
     fun buildM1(transient: Boolean): ByteArray {
-        val base = arrayOf(
-            TlvUtil.TLV_METHOD to byteArrayOf(0),
-            TlvUtil.TLV_STATE to byteArrayOf(1)
-        )
         return if (transient) {
-            TlvUtil.build(*base, TlvUtil.TLV_FLAGS to TRANSIENT_FLAGS)
+            TlvUtil.build(
+                TlvUtil.TLV_METHOD to byteArrayOf(0),
+                TlvUtil.TLV_STATE to byteArrayOf(1),
+                TlvUtil.TLV_FLAGS to TRANSIENT_FLAGS
+            )
         } else {
-            TlvUtil.build(*base)
+            TlvUtil.build(
+                TlvUtil.TLV_METHOD to byteArrayOf(0),
+                TlvUtil.TLV_STATE to byteArrayOf(1)
+            )
         }
     }
 
@@ -62,12 +70,11 @@ class SRP6aClient(
         if (state != 2.toByte()) return null
         val salt = parsed[TlvUtil.TLV_SALT]?.firstOrNull() ?: return null
         val serverB = parsed[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull() ?: return null
-        if (salt.size != 16) return null
         val bValue = BigInteger(1, serverB)
         // RFC 5054 §3.1: abort if B mod N == 0 - a malicious/compromised peer could pick
         // a degenerate B to make the shared secret predictable and bypass proof of
         // knowledge of the password.
-        if (bValue.mod(N) == BigInteger.ZERO) return null
+        if (bValue.signum() <= 0 || bValue >= N) return null
         this.salt = salt
         this.B = bValue
         return buildM3(salt, serverB)
@@ -82,8 +89,8 @@ class SRP6aClient(
         this.x = BigInteger(1, xBytes)
         val xv = this.x!!
 
-        val aBytes = ByteArray(64).also(random::nextBytes)
-        val av = BigInteger(1, aBytes).mod(N.subtract(BigInteger.ONE)).add(BigInteger.ONE)
+        val aBytes = ByteArray(32).also(random::nextBytes)
+        val av = BigInteger(1, aBytes).let { if (it.signum() == 0) BigInteger.ONE else it }
         this.a = av
         val Av = g.modPow(av, N)
         this.A = Av
@@ -93,11 +100,11 @@ class SRP6aClient(
         val Bv = this.B!!
         val Bravo = bigIntToMinimal(Bv)
 
-        // k = H_nn_pad(SHA512, N, g, N_len) -> pad384(N) || pad384(g)
+        // k = H(pad384(N) || pad384(g))
         val kBytes = hash(bigIntToFixed(N, PUBKEY_3072_SIZE) + bigIntToFixed(g, PUBKEY_3072_SIZE))
         val k = BigInteger(1, kBytes)
 
-        // u = H_nn_pad(SHA512, A, B, N_len) -> pad384(A) || pad384(B)
+        // u = H(pad384(A) || pad384(B))
         val uBytes = hash(bigIntToFixed(Av, PUBKEY_3072_SIZE) + bigIntToFixed(Bv, PUBKEY_3072_SIZE))
         val u = BigInteger(1, uBytes)
 
@@ -117,8 +124,8 @@ class SRP6aClient(
         val hnXorHg = xorBytes(hn, hg)
         val hi = hash(usernameBytes)
 
-        // The proof uses the natural (unpadded) A and B, but the wire TLV must
-        // carry A padded to the 384-byte group size.
+        // Proof uses natural (unpadded) A and B, but the wire TLV carries A padded
+        // to the 384-byte group size (pairing.go:594).
         val M1v = hash(hnXorHg + hi + salt + Araw + Bravo + Kv)
         this.M1 = M1v
 
@@ -129,183 +136,111 @@ class SRP6aClient(
         )
     }
 
+    /**
+     * M4. Mirrors pairing.go:602-614: an error TLV fails, a present proof must
+     * match, and an absent proof is accepted.
+     */
     fun verifyM4(m4Tlv: ByteArray): Boolean {
         val parsed = TlvUtil.parse(m4Tlv)
-        val state = parsed[TlvUtil.TLV_STATE]?.firstOrNull()?.get(0) ?: return false
-        if (state != 4.toByte()) return false
-        val serverProof = parsed[TlvUtil.TLV_PROOF]?.firstOrNull() ?: return false
+        if (parsed[TlvUtil.TLV_ERROR]?.firstOrNull() != null) return false
+        val serverProof = parsed[TlvUtil.TLV_PROOF]?.firstOrNull() ?: return true
 
-        val a = this.M1 ?: return false
-        val b = this.K ?: return false
-        val expectedM2 = hash(this.Araw!! + a + b)
+        val m1 = this.M1 ?: return false
+        val k = this.K ?: return false
+        val expectedM2 = hash(this.Araw!! + m1 + k)
         return expectedM2.contentEquals(serverProof)
     }
 
     /**
-     * M5: register our long-term Ed25519 identity with the receiver. The key
-     * pair must be the persisted one, because pair-verify M3 signs with it on
-     * every later connection.
+     * M5: hand the receiver our long-term Ed25519 identity, signed with that
+     * same identity. The key pair MUST be the persisted one that pair-verify
+     * will later sign with (pairing.go:619-650).
      */
-    fun buildM5(credentials: AirPlay2Credentials, includeScreenCaptureAcl: Boolean = false): ByteArray? {
+    fun buildM5(credentials: AirPlay2Credentials, includeScreenCaptureAcl: Boolean): ByteArray? {
         val k = sharedKeyBytes ?: return null
-        val edPub = credentials.ed25519Public
-        val saltSet = "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8)
-        val infoSet = "Pair-Setup-Encrypt-Info".toByteArray(Charsets.UTF_8)
-        val encKey = AirPlay2Crypto.hkdfSha512(saltSet, k, infoSet, 32)
-
-        // Build device info: {Identifier, Signature: ed25519_sign(device_x || identifier || public_key)}
-        val deviceX = AirPlay2Crypto.hkdfSha512(
-            "Pair-Setup-Controller-Sign-Salt".toByteArray(),
+        val encKey = AirPlay2Crypto.hkdfSha512(
+            "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8),
             k,
-            "Pair-Setup-Controller-Sign-Info".toByteArray(),
+            "Pair-Setup-Encrypt-Info".toByteArray(Charsets.UTF_8),
             32
         )
-        val deviceIdBytes = credentials.pairingId.toByteArray(Charsets.UTF_8)
-        val signData = deviceX + deviceIdBytes + edPub
+        val sigKey = AirPlay2Crypto.hkdfSha512(
+            "Pair-Setup-Controller-Sign-Salt".toByteArray(Charsets.UTF_8),
+            k,
+            "Pair-Setup-Controller-Sign-Info".toByteArray(Charsets.UTF_8),
+            32
+        )
+
+        val identifier = credentials.pairingId.toByteArray(Charsets.UTF_8)
+        val signData = sigKey + identifier + credentials.ed25519Public
         val signature = AirPlay2Crypto.ed25519SignWithSeed(credentials.ed25519Seed, signData)
 
-        // Sub-TLV order matches Apple's senders: identifier, public key,
-        // signature, then the ACL for screen-capture pairing.
-        val plaintext = if (includeScreenCaptureAcl) {
+        val subTlv = if (includeScreenCaptureAcl) {
             TlvUtil.build(
-                TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
-                TlvUtil.TLV_PUBLIC_KEY to edPub,
+                TlvUtil.TLV_IDENTIFIER to identifier,
+                TlvUtil.TLV_PUBLIC_KEY to credentials.ed25519Public,
                 TlvUtil.TLV_SIGNATURE to signature,
                 TlvUtil.TLV_ACL to SCREEN_CAPTURE_ACL
             )
         } else {
             TlvUtil.build(
-                TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
-                TlvUtil.TLV_PUBLIC_KEY to edPub,
+                TlvUtil.TLV_IDENTIFIER to identifier,
+                TlvUtil.TLV_PUBLIC_KEY to credentials.ed25519Public,
                 TlvUtil.TLV_SIGNATURE to signature
             )
         }
 
         // Fixed nonce: 00 00 00 00 "PS-Msg05"
         val nonce = ByteArray(12)
-        val msgNonce = "PS-Msg05".toByteArray(Charsets.UTF_8)
-        System.arraycopy(msgNonce, 0, nonce, 4, msgNonce.size)
+        System.arraycopy("PS-Msg05".toByteArray(Charsets.UTF_8), 0, nonce, 4, 8)
 
-        val (ciphertext, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(encKey, nonce, plaintext, ByteArray(0))
+        val (ciphertext, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(encKey, nonce, subTlv, ByteArray(0))
 
         return TlvUtil.build(
-            TlvUtil.TLV_STATE to byteArrayOf(5),
-            TlvUtil.TLV_ENCRYPTED_DATA to (ciphertext + tag)
+            TlvUtil.TLV_ENCRYPTED_DATA to (ciphertext + tag),
+            TlvUtil.TLV_STATE to byteArrayOf(5)
         )
     }
 
-    fun buildM5Raw(ed25519PubKey: ByteArray, ed25519Seed: ByteArray, deviceId: String): ByteArray? {
-        val k = sharedKeyBytes ?: return null
-        val saltSet = "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8)
-        val infoSet = "Pair-Setup-Encrypt-Info".toByteArray(Charsets.UTF_8)
-        val encKey = AirPlay2Crypto.hkdfSha512(saltSet, k, infoSet, 32)
-
-        val deviceX = AirPlay2Crypto.hkdfSha512(
-            "Pair-Setup-Controller-Sign-Salt".toByteArray(),
-            k,
-            "Pair-Setup-Controller-Sign-Info".toByteArray(),
-            32
-        )
-        val deviceIdBytes = deviceId.toByteArray(Charsets.UTF_8)
-        val signData = deviceX + deviceIdBytes + ed25519PubKey
-        val signer = org.bouncycastle.crypto.signers.Ed25519Signer()
-        signer.init(true, org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(ed25519Seed, 0))
-        signer.update(signData, 0, signData.size)
-        val signature = signer.generateSignature()
-
-        val deviceInfoTlv = TlvUtil.build(
-            TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
-            TlvUtil.TLV_SIGNATURE to signature
-        )
-        val pubKeyTlv = TlvUtil.build(
-            TlvUtil.TLV_PUBLIC_KEY to ed25519PubKey
-        )
-        val plaintext = deviceInfoTlv + pubKeyTlv
-        val nonce = ByteArray(12)
-        val msgNonce = "PS-Msg05".toByteArray(Charsets.UTF_8)
-        System.arraycopy(msgNonce, 0, nonce, 4, msgNonce.size)
-        val (ciphertext, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(encKey, nonce, plaintext, ByteArray(0))
-        return TlvUtil.build(
-            TlvUtil.TLV_STATE to byteArrayOf(5),
-            TlvUtil.TLV_ENCRYPTED_DATA to (ciphertext + tag)
-        )
-    }
-
-    fun verifyM6(m6Tlv: ByteArray): ByteArray? {
-        val k = sharedKeyBytes ?: return null
-        val saltSet = "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8)
-        val infoSet = "Pair-Setup-Encrypt-Info".toByteArray(Charsets.UTF_8)
-        val encKey = AirPlay2Crypto.hkdfSha512(saltSet, k, infoSet, 32)
-
+    /**
+     * M6. The reference only checks for an error TLV and never decrypts the
+     * body (pairing.go:656-661); the accessory's long-term public key is taken
+     * from `/info` instead. Returns false only on an explicit error TLV.
+     */
+    fun verifyM6(m6Tlv: ByteArray): Boolean {
         val parsed = TlvUtil.parse(m6Tlv)
-        val state = parsed[TlvUtil.TLV_STATE]?.firstOrNull()?.get(0) ?: return null
-        if (state != 6.toByte()) return null
-        val encryptedData = parsed[TlvUtil.TLV_ENCRYPTED_DATA]?.firstOrNull() ?: return null
-        if (encryptedData.size < 16) return null
-
-        val ciphertext = encryptedData.copyOfRange(0, encryptedData.size - 16)
-        val tag = encryptedData.copyOfRange(encryptedData.size - 16, encryptedData.size)
-
-        val nonce = ByteArray(12)
-        val msgNonce = "PS-Msg06".toByteArray(Charsets.UTF_8)
-        System.arraycopy(msgNonce, 0, nonce, 4, msgNonce.size)
-
-        val decrypted = try {
-            AirPlay2Crypto.chacha20Poly1305Decrypt(encKey, nonce, ciphertext, ByteArray(0), tag)
-        } catch (e: Exception) {
-            return null
-        }
-
-        // Parse decrypted TLV: {Identifier, PublicKey, Signature}
-        val innerParsed = TlvUtil.parse(decrypted)
-        val deviceId = innerParsed[TlvUtil.TLV_IDENTIFIER]?.firstOrNull() ?: return null
-        val pk = innerParsed[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull() ?: return null
-        val signature = innerParsed[TlvUtil.TLV_SIGNATURE]?.firstOrNull() ?: return null
-
-        // Verify signature: device_x = HKDF(session_key, "Pair-Setup-Accessory-Sign-Salt", "Pair-Setup-Accessory-Sign-Info")
-        val deviceX = AirPlay2Crypto.hkdfSha512(
-            "Pair-Setup-Accessory-Sign-Salt".toByteArray(),
-            k,
-            "Pair-Setup-Accessory-Sign-Info".toByteArray(),
-            32
-        )
-        val verifyData = deviceX + deviceId + pk
-        val valid = AirPlay2Crypto.ed25519Verify(pk, verifyData, signature)
-        if (!valid) return null
-
-        return pk
+        return parsed[TlvUtil.TLV_ERROR]?.firstOrNull() == null
     }
 
     private fun hash(data: ByteArray): ByteArray {
         val out = ByteArray(digestSize)
+        digest.reset()
         digest.update(data, 0, data.size)
         digest.doFinal(out, 0)
         return out
     }
 
     private fun bigIntToMinimal(n: BigInteger): ByteArray {
-        val arr = n.toByteArray()
-        return if (arr.size > 1 && arr[0] == 0.toByte()) {
-            arr.copyOfRange(1, arr.size)
+        val bytes = n.toByteArray()
+        return if (bytes.size > 1 && bytes[0] == 0.toByte()) {
+            bytes.copyOfRange(1, bytes.size)
         } else {
-            arr
+            bytes
         }
     }
 
     private fun xorBytes(a: ByteArray, b: ByteArray): ByteArray {
-        val len = minOf(a.size, b.size)
-        val result = ByteArray(len)
-        for (i in 0 until len) result[i] = (a[i].toInt() xor b[i].toInt()).toByte()
-        return result
+        val out = ByteArray(minOf(a.size, b.size))
+        for (i in out.indices) out[i] = (a[i].toInt() xor b[i].toInt()).toByte()
+        return out
     }
 
     private fun bigIntToFixed(n: BigInteger, size: Int): ByteArray {
-        val raw = bigIntToMinimal(n)
-        if (raw.size == size) return raw
-        val result = ByteArray(size)
-        val dstOffset = size - raw.size
-        System.arraycopy(raw, 0, result, dstOffset, raw.size)
-        return result
+        val minimal = bigIntToMinimal(n)
+        if (minimal.size >= size) return minimal.copyOfRange(minimal.size - size, minimal.size)
+        val out = ByteArray(size)
+        System.arraycopy(minimal, 0, out, size - minimal.size, minimal.size)
+        return out
     }
 
     operator fun ByteArray.plus(other: ByteArray): ByteArray {

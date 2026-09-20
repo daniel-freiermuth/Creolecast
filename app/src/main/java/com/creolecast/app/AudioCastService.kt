@@ -781,6 +781,11 @@ class AudioCastService : Service() {
                 catch (e: Exception) { null }
             } else null
 
+            // Long-term HomeKit pairing identities, keyed by the receiver's
+            // AirPlay DeviceID, so pair-verify can reuse the key pair that
+            // pair-setup registered instead of re-pairing on every connect.
+            val credentialStore = AndroidCredentialStore(securePreferences)
+
             // Load any PIN previously saved for this device
             var pin: String? = securePreferences.getString("airplay2_pin_${dest.host}", null)
             var clearPinOnFailure = pin != null  // stale saved pin should be wiped if connect() fails
@@ -793,11 +798,11 @@ class AudioCastService : Service() {
                     dacpId = dacpId,
                     activeRemote = activeRemote,
                     sampleRate = SAMPLE_RATE,
-                    channels = 2,
                     frameSize = AP2_ALAC_FRAME_SIZE,
                     password = pin,
                     txtPk = txtPk,
-                    credentialStore = AndroidCredentialStore(securePreferences)
+                    credentialStore = credentialStore,
+                    clientName = getString(R.string.app_name)
                 )
 
                 ap2Client.eventListener = object : AirPlay2Client.EventListener {
