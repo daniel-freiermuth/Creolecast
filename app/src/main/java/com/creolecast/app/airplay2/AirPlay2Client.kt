@@ -343,16 +343,19 @@ class AirPlay2Client(
         }
         Log.d(TAG, "M2 serverId=${serverId.toString(Charsets.UTF_8)} sigSize=${serverSignature.size}")
 
-        // Verify: signature(server_eph_pub || server_id || client_eph_pub) against serverEd25519Pub
-        // Use deviceEd25519PubKey from /info or txtPk as the server's Ed25519 public key
-        // If we have it, verify; else skip verification (dev mode)
+        // Authenticate the receiver: signature over
+        // (server_eph_pub || server_id || client_eph_pub) against the long-term
+        // key from /info or the mDNS TXT record. A mismatch means we are not
+        // talking to the device we paired with, so it must be fatal.
         val verifyInfo = serverPubKey + serverId + clientPub
         val serverEd25519Pub = this.deviceEd25519PubKey
-        if (serverEd25519Pub != null) {
-            val valid = AirPlay2Crypto.ed25519Verify(serverEd25519Pub, verifyInfo, serverSignature)
-            Log.d(TAG, "M2 signature verify result=$valid")
+        if (serverEd25519Pub != null && serverEd25519Pub.size == 32) {
+            if (!AirPlay2Crypto.ed25519Verify(serverEd25519Pub, verifyInfo, serverSignature)) {
+                Log.e(TAG, "pair-verify M2 server signature rejected")
+                return false
+            }
         } else {
-            Log.w(TAG, "No server Ed25519 public key, skipping M2 signature verification")
+            Log.w(TAG, "No server Ed25519 public key, cannot authenticate receiver")
         }
 
         // Build M3: TLV{Identifier, Signature: ed25519(client_eph_pub || identifier || server_eph_pub)}
