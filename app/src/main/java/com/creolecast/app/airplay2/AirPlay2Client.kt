@@ -39,6 +39,7 @@ class AirPlay2Client(
         private const val TAG = "AirPlay2Client"
         private const val PUBKEY_3072_SIZE = 384
         private const val HAP_FRAME_SIZE = 1024
+        private const val USER_AGENT = "AirPlay/935.7.1"
 
         /** X-Apple-HKP pairing types. */
         private const val HKP_TRANSIENT = 4
@@ -790,11 +791,11 @@ class AirPlay2Client(
     }
 
     private fun sendHttpRequest(method: String, path: String, contentType: String?, body: ByteArray?): HttpResponse {
-        return sendRequest("$method $path HTTP/1.1", contentType, body)
+        return sendRequest("$method $path RTSP/1.0", contentType, body)
     }
 
     private fun sendPairingRequest(method: String, path: String, contentType: String?, body: ByteArray?, hkpType: Int): HttpResponse {
-        return sendRequest("$method $path HTTP/1.1", contentType, body, "X-Apple-HKP" to hkpType.toString())
+        return sendRequest("$method $path RTSP/1.0", contentType, body, "X-Apple-HKP" to hkpType.toString())
     }
 
     private fun sendRtspRequest(method: String, url: String, contentType: String?, body: ByteArray?): HttpResponse {
@@ -894,16 +895,17 @@ class AirPlay2Client(
         val sb = StringBuilder()
         sb.append("$requestLine\r\n")
         sb.append("CSeq: ${++cseq}\r\n")
-        sb.append("User-Agent: CreoleCast/1.0\r\n")
+        sb.append("User-Agent: $USER_AGENT\r\n")
         sb.append("Client-Instance: ${deviceId.replace(":", "")}\r\n")
         sb.append("DACP-ID: $dacpId\r\n")
         sb.append("Active-Remote: $activeRemote\r\n")
         if (sessionId != null) sb.append("Session: $sessionId\r\n")
         if (extraHeader != null) sb.append("${extraHeader.first}: ${extraHeader.second}\r\n")
-        if (contentType != null && body != null) {
+        if (contentType != null && body != null && body.isNotEmpty()) {
             sb.append("Content-Type: $contentType\r\n")
-            sb.append("Content-Length: ${body.size}\r\n")
         }
+        // Apple's senders always send Content-Length, even for empty bodies.
+        sb.append("Content-Length: ${body?.size ?: 0}\r\n")
         sb.append("\r\n")
         return sb.toString()
     }
