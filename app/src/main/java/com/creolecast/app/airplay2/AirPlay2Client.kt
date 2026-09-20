@@ -140,7 +140,7 @@ class AirPlay2Client(
             // Full: password provided → use as-is
             val effectivePassword = password
             if (effectivePassword != null || needsPairing(statusFlags)) {
-                Log.d(TAG, "Pair-setup: starting (password=${effectivePassword ?: "3939 (transient)"})")
+                Log.d(TAG, "Pair-setup: starting")
                 if (!doPairSetup(effectivePassword)) {
                     if (password == null) {
                         throw NeedsPinException(host)
@@ -149,14 +149,11 @@ class AirPlay2Client(
                 }
             }
 
-            if (didTransientPairing) {
-                Log.d(TAG, "Transient pairing: skipping pair-verify")
-            } else if (deviceEd25519PubKey != null) {
-                if (!doPairVerify()) {
-                    Log.w(TAG, "Pair-verify failed, continuing anyway")
-                }
-            } else {
-                Log.w(TAG, "No device pk available, skipping pair-verify")
+            // Pair-verify always runs: it is what derives the session keys and
+            // proves we hold the identity M5 registered.
+            if (!doPairVerify()) {
+                Log.e(TAG, "pair-verify failed")
+                return false
             }
 
             if (!sendSetupSession()) return false
@@ -248,17 +245,17 @@ class AirPlay2Client(
                     Log.e(TAG, "pair-setup M4 verification failed"); continue
                 }
 
-                // The key registered here is the one pair-verify M3 must sign
-                // with, so it has to be the persisted identity, not a fresh
-                // throwaway pair.
+                // M5/M6 run for transient pairing too: M5 is what registers the
+                // long-term key that pair-verify then signs with. Only the
+                // persistence differs - a transient pairing is forgotten by the
+                // receiver when the session ends, so saving it would guarantee a
+                // failed pair-verify next time.
+                val creds = pairingCredentials()
+                val m5 = srp.buildM5(creds, includeScreenCaptureAcl = hkpType == HKP_SCREEN_CAPTURE) ?: continue
+                val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, hkpType)
+                if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
+                srp.verifyM6(resp3.body ?: return false)?.let { deviceEd25519PubKey = it }
                 if (!attemptTransient) {
-                    val creds = pairingCredentials()
-                    val m5 = srp.buildM5(creds, includeScreenCaptureAcl = hkpType == HKP_SCREEN_CAPTURE) ?: continue
-                    val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, hkpType)
-                    if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
-                    val serverKey = srp.verifyM6(resp3.body ?: return false)
-                    if (serverKey == null) { Log.e(TAG, "pair-setup M6 verification failed"); continue }
-                    deviceEd25519PubKey = serverKey
                     credentialStore.save(receiverCredentialKey(), creds)
                 }
 
