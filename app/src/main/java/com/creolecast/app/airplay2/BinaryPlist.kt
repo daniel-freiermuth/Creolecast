@@ -163,19 +163,46 @@ object BinaryPlist {
         }
     }
 
-    fun encodeSet(uuid: UUID): ByteArray = encode(mapOf(
-        "deviceID" to "00:00:00:00:00:00",
-        "sessionUUID" to uuid.toString().uppercase(),
-        "timingPort" to 0L,
-        "timingProtocol" to "PTP"
-    ))
-
-    fun makeSessionPlist(uuid: UUID, deviceId: String, timingPort: Int): ByteArray = encode(mapOf(
-        "deviceID" to deviceId,
-        "sessionUUID" to uuid.toString().uppercase(),
-        "timingPort" to timingPort.toLong(),
-        "timingProtocol" to "PTP"
-    ))
+    /**
+     * Control SETUP session descriptor. NTP sessions advertise a sender-side
+     * timing port; PTP sessions instead identify the sender as a timing peer.
+     */
+    fun makeSessionPlist(
+        sessionUuid: UUID,
+        deviceId: String,
+        name: String,
+        model: String,
+        sourceVersion: String,
+        timingProtocol: String,
+        timingPort: Int,
+        timingPeerId: String? = null,
+        timingPeerAddress: String? = null
+    ): ByteArray {
+        val session = LinkedHashMap<String, Any?>()
+        session["deviceID"] = deviceId
+        session["macAddress"] = deviceId
+        session["sessionUUID"] = sessionUuid.toString().uppercase()
+        session["sourceVersion"] = sourceVersion
+        session["timingProtocol"] = timingProtocol
+        session["osBuildVersion"] = "13F69"
+        session["model"] = model
+        session["name"] = name
+        if (timingProtocol == "PTP") {
+            val peer = linkedMapOf<String, Any?>(
+                "ID" to (timingPeerId ?: deviceId),
+                "SupportsClockPortMatchingOverride" to true,
+                "DeviceType" to 0L,
+                "Addresses" to listOf(timingPeerAddress ?: "0.0.0.0")
+            )
+            session["timingPeerInfo"] = peer
+            session["timingPeerList"] = listOf(peer)
+        } else {
+            session["timingPort"] = timingPort.toLong()
+        }
+        session["updateSessionRequest"] = false
+        session["combinedGetInfoWithControlSetup"] = true
+        return encode(session)
+    }
 
     fun decode(data: ByteArray): Map<String, Any?> {
         if (data.size < 40) throw IllegalArgumentException("too short")

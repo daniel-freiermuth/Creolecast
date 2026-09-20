@@ -28,7 +28,8 @@ class AirPlay2Client(
     private val frameSize: Int = 352,
     private val password: String? = null,
     private val txtPk: ByteArray? = null,
-    private val credentialStore: AirPlay2CredentialStore = InMemoryCredentialStore()
+    private val credentialStore: AirPlay2CredentialStore = InMemoryCredentialStore(),
+    private val clientName: String = "CreoleCast"
 ) {
     interface EventListener {
         fun onVolumeChange(db: Double) {}
@@ -40,6 +41,14 @@ class AirPlay2Client(
         private const val PUBKEY_3072_SIZE = 384
         private const val HAP_FRAME_SIZE = 1024
         private const val USER_AGENT = "AirPlay/935.7.1"
+        private const val SOURCE_VERSION_NTP = "280.33"
+        private const val SOURCE_VERSION_PTP = "980.71.1"
+
+        /** Receiver feature bits. */
+        private const val FEATURE_PTP = 41
+
+        /** 85 ms at 44100 Hz, truncated. */
+        private const val LATENCY_SAMPLES = 3748
 
         /** X-Apple-HKP pairing types. */
         private const val HKP_TRANSIENT = 4
@@ -71,7 +80,6 @@ class AirPlay2Client(
     private var rtpTimestamp = 0
     private var syncPacketSent = false
     private val ssrc = secureRandom.nextInt().toUInt().toLong()
-    private val latencyFrames = 11025
 
     private var sharedSecret: ByteArray? = null
     private var ecdhKeyPair: AsymmetricCipherKeyPair? = null
@@ -99,6 +107,11 @@ class AirPlay2Client(
     @Volatile private var running = false
     private var syncThread: Thread? = null
     private var keepAliveThread: Thread? = null
+    private var timingThread: Thread? = null
+
+    /** Negotiated timing protocol and the receiver's PTP clock identity. */
+    private var usePtp = false
+    private var ptpTimelineId = 0L
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
     private var channelEncrypted = false
@@ -131,6 +144,20 @@ class AirPlay2Client(
     }
 
     private fun hasFeature(bit: Int): Boolean = (receiverFeatures shr bit) and 1L == 1L
+
+    /** PTP needs SourceVersion >= 354.54.6; 377.40.x advertises it but is broken. */
+    private fun supportsPtpSourceVersion(version: String): Boolean {
+        if (version.isEmpty()) return false
+        val parts = version.split(".").map { it.toIntOrNull() ?: return false }
+        if (parts.size >= 2 && parts[0] == 377 && parts[1] == 40) return false
+        val minimum = listOf(354, 54, 6)
+        for (i in minimum.indices) {
+            val actual = parts.getOrElse(i) { 0 }
+            if (actual > minimum[i]) return true
+            if (actual < minimum[i]) return false
+        }
+        return true
+    }
 
     class HttpResponse(val code: Int, val headers: Map<String, String>, val body: ByteArray?)
 
@@ -195,6 +222,12 @@ class AirPlay2Client(
                 return false
             }
 
+            // PTP needs an encrypted session, feature bit 41 and a new enough
+            // receiver; everything else falls back to NTP.
+            usePtp = channelEncrypted && hasFeature(FEATURE_PTP) &&
+                supportsPtpSourceVersion(receiverSourceVersion)
+            Log.d(TAG, "Negotiated timing=${if (usePtp) "PTP" else "NTP"}")
+
             if (!sendSetupSession()) return false
             if (!sendRecord()) return false
             connectEventPort()
@@ -203,6 +236,7 @@ class AirPlay2Client(
             setVolume(0.0)
 
             running = true
+            if (!usePtp) startTimingResponder()
             startSyncLoop()
             startKeepAliveLoop()
             Log.d(TAG, "AirPlay 2 connected successfully")
@@ -447,18 +481,29 @@ class AirPlay2Client(
     }
 
     private fun sendSetupSession(): Boolean {
-        val plist = BinaryPlist.makeSessionPlist(sessionUuid, deviceId, timingSocket.localPort)
-        Log.d(TAG, "SETUP session: ${sessionUrl}, plist size=${plist.size}")
+        val localAddress = socket.localAddress?.hostAddress ?: "0.0.0.0"
+        val plist = BinaryPlist.makeSessionPlist(
+            sessionUuid = sessionUuid,
+            deviceId = deviceId,
+            name = clientName,
+            model = "Linux",
+            sourceVersion = if (usePtp) SOURCE_VERSION_PTP else SOURCE_VERSION_NTP,
+            timingProtocol = if (usePtp) "PTP" else "NTP",
+            timingPort = timingSocket.localPort,
+            timingPeerId = deviceId,
+            timingPeerAddress = localAddress
+        )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
-        Log.d(TAG, "SETUP session response: code=${resp.code}, headers=${resp.headers}")
         if (resp.code != 200) { Log.e(TAG, "SETUP session failed: ${resp.code}"); return false }
         sessionId = resp.headers["Session"]?.substringBefore(";")?.trim()
             ?: sessionUuid.toString().uppercase()
-        Log.d(TAG, "SETUP session: sessionId=$sessionId")
-        val transport = resp.headers["Transport"] ?: ""
-        parseTransportResponse(transport)
+        parseTransportResponse(resp.headers["Transport"] ?: "")
         resp.body?.let { parseSessionResponse(it) }
-        return sessionId != null
+        if (usePtp && ptpTimelineId == 0L) {
+            Log.e(TAG, "PTP SETUP response omitted timingPeerInfo.ClockID")
+            return false
+        }
+        return true
     }
 
     private fun sendRecord(): Boolean {
@@ -542,11 +587,10 @@ class AirPlay2Client(
     private fun parseSessionResponse(body: ByteArray) {
         try {
             val dict = BinaryPlist.decode(body)
-            val port = (dict["eventPort"] as? Long)?.toInt()
-            if (port != null && port > 0) {
-                eventPort = port
-                Log.d(TAG, "Event port: $eventPort")
-            }
+            (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
+            // PTP sync packets must carry the receiver's clock identity.
+            ((dict["timingPeerInfo"] as? Map<*, *>)?.get("ClockID") as? Long)
+                ?.let { if (it != 0L) ptpTimelineId = it }
         } catch (e: Exception) {
             Log.w(TAG, "parseSessionResponse failed: ${e.message}")
         }
@@ -656,26 +700,70 @@ class AirPlay2Client(
         return header + payload
     }
 
+    /**
+     * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
+     * 28 bytes / 0xd7 plus the receiver's timeline id for PTP.
+     */
     private fun sendSyncPacket() {
-        val now = currentNtpTime()
-        val rtpTsLatency = (rtpTimestamp - latencyFrames).coerceAtLeast(0)
-        val packetSize = if (supportsEncryption) 28 else 20
-        val packet = ByteArray(packetSize)
+        if (controlRemotePort <= 0) return
+        val networkTime = currentNtpTime()
+        val packet = ByteArray(if (usePtp) 28 else 20)
         packet[0] = (if (syncPacketSent) 0x80 else 0x90).toByte()
-        packet[1] = (0xD0 or (if (supportsEncryption) 0x07 else 0x04)).toByte()
+        packet[1] = (if (usePtp) 0xD7 else 0xD4).toByte()
         packet[2] = 0
-        packet[3] = 0
+        packet[3] = 4
         syncPacketSent = true
-        writeUInt32(packet, 4, rtpTsLatency)
-        writeUInt64(packet, 8, now)
-        writeUInt32(packet, 16, rtpTimestamp)
-        if (supportsEncryption && packetSize >= 28) {
-            writeUInt64(packet, 20, ptpClockId)
+        writeUInt32(packet, 4, rtpTimestamp - LATENCY_SAMPLES)
+        if (usePtp) {
+            writeUInt64(packet, 8, ptpNanoseconds(networkTime))
+            writeUInt32(packet, 16, rtpTimestamp)
+            writeUInt64(packet, 20, ptpTimelineId)
+        } else {
+            writeUInt64(packet, 8, networkTime)
+            writeUInt32(packet, 16, rtpTimestamp)
         }
         try {
-            val dp = DatagramPacket(packet, packet.size, InetAddress.getByName(host), controlRemotePort)
-            controlSocket.send(dp)
+            controlSocket.send(
+                DatagramPacket(packet, packet.size, InetAddress.getByName(host), controlRemotePort)
+            )
         } catch (_: Exception) {}
+    }
+
+    /** seconds.32 fixed point -> nanoseconds. */
+    private fun ptpNanoseconds(timestamp: Long): Long {
+        val seconds = timestamp ushr 32
+        val fraction = timestamp and 0xFFFFFFFFL
+        return seconds * 1_000_000_000L + (fraction * 1_000_000_000L ushr 32)
+    }
+
+    /**
+     * Answer the receiver's NTP timing requests (0xd2) with 0xd3 responses.
+     * Without this an NTP receiver never establishes a media clock and stays
+     * silent.
+     */
+    private fun startTimingResponder() {
+        timingThread = thread(name = "ap2-timing", isDaemon = true) {
+            val buf = ByteArray(64)
+            while (running) {
+                try {
+                    val request = DatagramPacket(buf, buf.size)
+                    timingSocket.receive(request)
+                    if (request.length < 32 || (buf[1].toInt() and 0xFF) != 0xD2) continue
+                    val receiveTime = currentNtpTime()
+                    val response = ByteArray(32)
+                    response[0] = 0x80.toByte()
+                    response[1] = 0xD3.toByte()
+                    response[2] = buf[2]
+                    response[3] = buf[3]
+                    System.arraycopy(buf, 24, response, 8, 8)
+                    writeUInt64(response, 16, receiveTime)
+                    writeUInt64(response, 24, currentNtpTime())
+                    timingSocket.send(DatagramPacket(response, response.size, request.address, request.port))
+                } catch (e: Exception) {
+                    if (running) Log.w(TAG, "timing responder: ${e.message}")
+                }
+            }
+        }
     }
 
     fun setVolume(db: Double) {
@@ -816,6 +904,7 @@ class AirPlay2Client(
         running = false
         syncThread?.interrupt()
         keepAliveThread?.interrupt()
+        timingThread?.interrupt()
         audioSocket?.close()
         try { eventSocket?.close() } catch (_: Exception) {}
         controlSocket.close()
@@ -1047,7 +1136,6 @@ class AirPlay2Client(
         }
     }
 
-    private var ptpClockId = secureRandom.nextLong()
 
     operator fun ByteArray.plus(other: ByteArray): ByteArray {
         val result = ByteArray(this.size + other.size)
