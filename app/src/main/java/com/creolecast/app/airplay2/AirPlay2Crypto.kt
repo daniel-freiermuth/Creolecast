@@ -101,6 +101,24 @@ class AirPlay2Crypto {
             return signer.verifySignature(signature)
         }
 
+        // Raw 32-byte Ed25519 seed (private key material for the long-term pairing identity)
+        fun generateEd25519Seed(): ByteArray {
+            val seed = ByteArray(32)
+            SecureRandom().nextBytes(seed)
+            return seed
+        }
+
+        fun ed25519PublicFromSeed(seed: ByteArray): ByteArray {
+            return Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded
+        }
+
+        fun ed25519SignWithSeed(seed: ByteArray, data: ByteArray): ByteArray {
+            val signer = Ed25519Signer()
+            signer.init(true, Ed25519PrivateKeyParameters(seed, 0))
+            signer.update(data, 0, data.size)
+            return signer.generateSignature()
+        }
+
         fun generateEd25519KeyPair(): AsymmetricCipherKeyPair {
             val generator = Ed25519KeyPairGenerator()
             generator.init(Ed25519KeyGenerationParameters(SecureRandom()))
