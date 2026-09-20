@@ -304,28 +304,48 @@ object BinaryPlist {
         return readSizedInt(data, offset + 1, bytes)
     }
 
+    /**
+     * Audio stream descriptor. Receivers advertising feature bit 59 take the
+     * `streamConnections` form and reject a top-level `controlPort`; older
+     * ones require the reverse.
+     */
     fun makeStreamPlist(
         controlPort: Int,
-        sharedSecret: ByteArray,
+        shk: ByteArray?,
         streamConnectionId: Long,
-        sampleRate: Int = 44100,
-        spf: Int = 352,
-        payloadType: Int = 96
-    ): ByteArray = encode(mapOf(
-        "streams" to listOf(mapOf(
-            "audioFormat" to 262144L,
-            "audioMode" to "default",
-            "controlPort" to controlPort.toLong(),
-            "ct" to 2L,
-            "isMedia" to true,
-            "latencyMax" to 88200L,
-            "latencyMin" to 11025L,
-            "shk" to sharedSecret,
-            "spf" to spf.toLong(),
-            "sr" to sampleRate.toLong(),
-            "type" to payloadType.toLong(),
-            "supportsDynamicStreamID" to false,
-            "streamConnectionID" to streamConnectionId
-        ))
-    ))
+        sampleRate: Int,
+        spf: Int,
+        latencyMin: Long,
+        latencyMax: Long,
+        useStreamConnections: Boolean
+    ): ByteArray {
+        val stream = LinkedHashMap<String, Any?>()
+        stream["type"] = 96L
+        stream["streamConnectionID"] = streamConnectionId
+        stream["ct"] = 2L                    // ALAC
+        stream["spf"] = spf.toLong()
+        stream["sr"] = sampleRate.toLong()
+        stream["audioFormat"] = 0x40000L     // 262144
+        stream["audioMode"] = "default"
+        stream["latencyMin"] = latencyMin
+        stream["latencyMax"] = latencyMax
+        if (shk != null) {
+            stream["shk"] = shk
+        }
+        if (useStreamConnections) {
+            stream["isMedia"] = true
+            stream["supportsDynamicStreamID"] = true
+            stream["streamConnections"] = linkedMapOf<String, Any?>(
+                "streamConnectionTypeRTP" to linkedMapOf<String, Any?>(
+                    "streamConnectionKeyUseStreamEncryptionKey" to (shk != null)
+                ),
+                "streamConnectionTypeRTCP" to linkedMapOf<String, Any?>(
+                    "streamConnectionKeyPort" to controlPort.toLong()
+                )
+            )
+        } else {
+            stream["controlPort"] = controlPort.toLong()
+        }
+        return encode(mapOf("streams" to listOf(stream)))
+    }
 }

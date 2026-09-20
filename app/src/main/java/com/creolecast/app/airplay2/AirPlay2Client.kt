@@ -46,6 +46,7 @@ class AirPlay2Client(
 
         /** Receiver feature bits. */
         private const val FEATURE_PTP = 41
+        private const val FEATURE_STREAM_CONNECTIONS = 59
 
         /** 85 ms at 44100 Hz, truncated. */
         private const val LATENCY_SAMPLES = 3748
@@ -112,6 +113,11 @@ class AirPlay2Client(
     /** Negotiated timing protocol and the receiver's PTP clock identity. */
     private var usePtp = false
     private var ptpTimelineId = 0L
+    private var useStreamConnections = false
+
+    /** Audio stream key published as `shk`; null means audio goes out in the clear. */
+    private var audioKey: ByteArray? = null
+    private var audioNonceCounter = 0L
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
     private var channelEncrypted = false
@@ -516,72 +522,63 @@ class AirPlay2Client(
     }
 
     private fun sendSetupStream(): Boolean {
-        val secret = sharedSecret ?: ByteArray(32).also { secureRandom.nextBytes(it) }
-        val shk = AirPlay2Crypto.hkdfSha512(
-            "Pair-Setup-AES-Key".toByteArray(Charsets.UTF_8),
-            secret,
-            "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8),
-            32
-        )
+        // The audio key is a fresh random 32-byte value published as `shk`; it
+        // is not derived from the pairing secret. Unencrypted sessions publish
+        // no key and stream in the clear.
+        val shk = if (channelEncrypted) ByteArray(32).also(secureRandom::nextBytes) else null
+        useStreamConnections = hasFeature(FEATURE_STREAM_CONNECTIONS)
 
         val plist = BinaryPlist.makeStreamPlist(
             controlPort = controlSocket.localPort,
-            sharedSecret = shk,
-            streamConnectionId = sessionUuid.mostSignificantBits
+            shk = shk,
+            streamConnectionId = streamConnectionId,
+            sampleRate = sampleRate,
+            spf = frameSize,
+            latencyMin = 0L,
+            latencyMax = LATENCY_SAMPLES.toLong(),
+            useStreamConnections = useStreamConnections
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
-        Log.d(TAG, "SETUP stream response: code=${resp.code}, headers=${resp.headers}, bodySize=${resp.body?.size}")
-        if (resp.code != 200) return false
-
-        // AirPlay 2 returns port info in the response body plist, not the Transport header
-        val transport = resp.headers["Transport"] ?: ""
-        parseTransportResponse(transport)
+        if (resp.code != 200) { Log.e(TAG, "SETUP stream failed: ${resp.code}"); return false }
 
         resp.body?.let { body ->
             try {
                 val dict = BinaryPlist.decode(body)
-                Log.d(TAG, "SETUP stream plist keys: ${dict.keys}")
-                // Ports may be top-level or inside a "streams" array
-                val dataPort = (dict["dataPort"] as? Long)?.toInt()
-                    ?: (dict["server_port"] as? Long)?.toInt()
-                val ctrlPort = (dict["controlPort"] as? Long)?.toInt()
-                val evtPort = (dict["eventPort"] as? Long)?.toInt()
-
-                // Also check inside streams array
                 val streams = dict["streams"]
                 if (streams is List<*> && streams.isNotEmpty()) {
-                    val stream = streams[0] as? Map<*, *>
-                    if (stream != null) {
-                        Log.d(TAG, "SETUP stream[0] keys: ${stream.keys}")
-                        val dp = (stream["dataPort"] as? Long)?.toInt()
-                            ?: (stream["server_port"] as? Long)?.toInt()
-                        val cp = (stream["controlPort"] as? Long)?.toInt()
-                        if (dp != null && dp > 0) audioRemotePort = dp
-                        if (cp != null && cp > 0) controlRemotePort = cp
+                    (streams[0] as? Map<*, *>)?.let { stream ->
+                        (stream["dataPort"] as? Long)?.toInt()?.let { if (it > 0) audioRemotePort = it }
+                        (stream["controlPort"] as? Long)?.toInt()?.let { if (it > 0) controlRemotePort = it }
+                        // The streamConnections layout answers with both ports
+                        // nested instead of dataPort/controlPort.
+                        val connections = stream["streamConnections"] as? Map<*, *>
+                        connectionPort(connections, "streamConnectionTypeRTP")?.let { audioRemotePort = it }
+                        connectionPort(connections, "streamConnectionTypeRTCP")?.let { controlRemotePort = it }
                     }
                 }
-
-                if (dataPort != null && dataPort > 0) audioRemotePort = dataPort
-                if (ctrlPort != null && ctrlPort > 0) controlRemotePort = ctrlPort
-                if (evtPort != null && evtPort > 0) eventPort = evtPort
-                Log.d(TAG, "SETUP stream parsed: audio=$audioRemotePort ctrl=$controlRemotePort event=$eventPort")
+                (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
             } catch (e: Exception) {
                 Log.w(TAG, "SETUP stream plist parse failed: ${e.message}")
             }
         }
 
-        audioSocket = DatagramSocket(0)
-
-        // When transient pairing skipped pair-verify, cipherKeys is null but the
-        // server expects encrypted audio because we sent shk. Use shk as the
-        // encryption key (the server uses the same shk to decrypt).
-        if (cipherKeys == null) {
-            cipherKeys = AirPlay2Crypto.PairKeysResult(shk, shk, 0L, 0L)
-            supportsEncryption = true
-            Log.d(TAG, "Using stream shared key for audio encryption (transient pairing)")
+        if (audioRemotePort <= 0) {
+            Log.e(TAG, "SETUP stream returned no data port")
+            return false
         }
 
+        audioSocket = DatagramSocket(0)
+        // Audio is encrypted with the key we published, not with the control
+        // channel keys.
+        audioKey = shk
+        audioNonceCounter = 0
+        Log.d(TAG, "Audio stream: data=$audioRemotePort ctrl=$controlRemotePort encrypted=${shk != null}")
         return true
+    }
+
+    private fun connectionPort(connections: Map<*, *>?, key: String): Int? {
+        val port = (connections?.get(key) as? Map<*, *>)?.get("streamConnectionKeyPort") as? Long
+        return port?.toInt()?.takeIf { it > 0 }
     }
 
     private fun parseSessionResponse(body: ByteArray) {
@@ -654,23 +651,20 @@ class AirPlay2Client(
             val packet = buildRtpPacket(payload)
             val socket = audioSocket ?: return false
 
-            val keys = cipherKeys
-            if (supportsEncryption && keys != null) {
-                val counter = synchronized(this) { keys.encryptionCounter++ }
+            val key = audioKey
+            val datagram = if (key != null) {
+                val counter = synchronized(this) { audioNonceCounter++ }
                 val nonce = ByteArray(12)
                 for (i in 0..7) nonce[4 + i] = ((counter shr (i * 8)) and 0xFF).toByte()
                 val aad = packet.copyOfRange(4, 12)
-                val payloadEnc = packet.drop(12).toByteArray()
                 val (encrypted, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
-                    keys.encryptionKey, nonce, payloadEnc, aad
+                    key, nonce, packet.copyOfRange(12, packet.size), aad
                 )
-                val finalPacket = packet.copyOfRange(0, 12) + encrypted + tag + nonce.copyOfRange(4, 12)
-                val dp = DatagramPacket(finalPacket, finalPacket.size, InetAddress.getByName(host), audioRemotePort)
-                socket.send(dp)
+                packet.copyOfRange(0, 12) + encrypted + tag + nonce.copyOfRange(4, 12)
             } else {
-                val dp = DatagramPacket(packet, packet.size, InetAddress.getByName(host), audioRemotePort)
-                socket.send(dp)
+                packet
             }
+            socket.send(DatagramPacket(datagram, datagram.size, InetAddress.getByName(host), audioRemotePort))
 
             sequence = (sequence + 1) and 0xFFFF
             rtpTimestamp += frameSize
