@@ -100,12 +100,14 @@ class SRP6aClient(
         val hnXorHg = xorBytes(hn, hg)
         val hi = hash(usernameBytes)
 
+        // The proof uses the natural (unpadded) A and B, but the wire TLV must
+        // carry A padded to the 384-byte group size.
         val M1v = hash(hnXorHg + hi + salt + Araw + Bravo + Kv)
         this.M1 = M1v
 
         return TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(3),
-            TlvUtil.TLV_PUBLIC_KEY to Araw,
+            TlvUtil.TLV_PUBLIC_KEY to bigIntToFixed(Av, PUBKEY_3072_SIZE),
             TlvUtil.TLV_PROOF to M1v
         )
     }
