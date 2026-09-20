@@ -38,6 +38,7 @@ class AirPlay2Client(
     companion object {
         private const val TAG = "AirPlay2Client"
         private const val PUBKEY_3072_SIZE = 384
+        private const val HAP_FRAME_SIZE = 1024
 
         /** X-Apple-HKP pairing types. */
         private const val HKP_TRANSIENT = 4
@@ -98,6 +99,13 @@ class AirPlay2Client(
     private var syncThread: Thread? = null
     private var keepAliveThread: Thread? = null
 
+    /** HAP control-channel encryption, enabled once pair-verify completes. */
+    private var channelEncrypted = false
+    private var hapWriteKey: ByteArray? = null
+    private var hapReadKey: ByteArray? = null
+    private var hapWriteNonce = 0L
+    private var hapReadNonce = 0L
+
     class HttpResponse(val code: Int, val headers: Map<String, String>, val body: ByteArray?)
 
     fun connect(): Boolean {
@@ -106,7 +114,7 @@ class AirPlay2Client(
             socket.tcpNoDelay = true
             socket.soTimeout = 10000
             output = socket.getOutputStream()
-            input = socket.getInputStream()
+            input = HapInputStream(socket.getInputStream())
             localAddress = socket.localAddress.hostAddress ?: "0.0.0.0"
             val urlHost = if (localAddress.contains(':')) "[$localAddress]" else localAddress
             sessionUrl = "rtsp://$urlHost/$sessionUuid"
@@ -387,13 +395,23 @@ class AirPlay2Client(
         Log.d(TAG, "pair-verify M3 response: ${resp3.code}")
         if (resp3.code != 200) { Log.e(TAG, "pair-verify M3 failed: ${resp3.code}"); return false }
 
-        val pairSalt = "Pair-Verify-AES-Key".toByteArray(Charsets.UTF_8)
-        val encKey = AirPlay2Crypto.hkdfSha512(pairSalt, shared, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32)
-        val decKey = AirPlay2Crypto.hkdfSha512(pairSalt, shared, "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8), 32)
-
-        cipherKeys = AirPlay2Crypto.PairKeysResult(encKey, decKey, 0L, 0L)
+        // From here the whole RTSP channel is HAP framed. The key labels are
+        // HKDF(shared, "Control-Salt", "Control-{Write,Read}-Encryption-Key");
+        // the previous "Pair-Verify-AES-Key" salt belongs to the unrelated raw
+        // (non-HAP) pair-verify variant.
+        val controlSalt = "Control-Salt".toByteArray(Charsets.UTF_8)
+        hapWriteKey = AirPlay2Crypto.hkdfSha512(
+            controlSalt, shared, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+        )
+        hapReadKey = AirPlay2Crypto.hkdfSha512(
+            controlSalt, shared, "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+        )
+        hapWriteNonce = 0
+        hapReadNonce = 0
+        channelEncrypted = true
+        cipherKeys = AirPlay2Crypto.PairKeysResult(hapWriteKey!!, hapReadKey!!, 0L, 0L)
         supportsEncryption = true
-        Log.d(TAG, "Pair-verify complete")
+        Log.d(TAG, "Pair-verify complete, control channel encrypted")
         return true
     }
 
@@ -787,10 +805,88 @@ class AirPlay2Client(
         synchronized(this) {
             val out = output ?: return HttpResponse(0, emptyMap(), null)
             val req = buildRequest(requestLine, contentType, body, extraHeader)
-            out.write(req.toByteArray(Charsets.UTF_8))
-            if (body != null) out.write(body)
+            // Headers and body are one plaintext blob for framing purposes.
+            val frame = req.toByteArray(Charsets.UTF_8) + (body ?: ByteArray(0))
+            writeFramed(out, frame)
             out.flush()
             return readResponse()
+        }
+    }
+
+    /**
+     * HAP framing: split the plaintext into 1024-byte chunks and send each as
+     * `[length LE16][ciphertext][16-byte tag]`, with the length prefix as AAD
+     * and an incrementing little-endian counter nonce.
+     */
+    private fun writeFramed(out: OutputStream, data: ByteArray) {
+        if (!channelEncrypted) { out.write(data); return }
+        val key = hapWriteKey ?: return
+        var offset = 0
+        while (offset < data.size) {
+            val n = minOf(HAP_FRAME_SIZE, data.size - offset)
+            val lengthPrefix = byteArrayOf((n and 0xFF).toByte(), ((n shr 8) and 0xFF).toByte())
+            val nonce = ByteArray(12)
+            for (i in 0..7) nonce[4 + i] = ((hapWriteNonce shr (i * 8)) and 0xFF).toByte()
+            val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
+                key, nonce, data.copyOfRange(offset, offset + n), lengthPrefix
+            )
+            out.write(lengthPrefix)
+            out.write(ct)
+            out.write(tag)
+            hapWriteNonce++
+            offset += n
+        }
+    }
+
+    /** Transparently decrypts HAP frames once the channel is encrypted. */
+    private inner class HapInputStream(private val raw: InputStream) : InputStream() {
+        private var plain: ByteArray = ByteArray(0)
+        private var pos = 0
+
+        override fun read(): Int {
+            if (!channelEncrypted) return raw.read()
+            if (pos >= plain.size && !fill()) return -1
+            return plain[pos++].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (!channelEncrypted) return raw.read(b, off, len)
+            if (len == 0) return 0
+            if (pos >= plain.size && !fill()) return -1
+            val n = minOf(len, plain.size - pos)
+            System.arraycopy(plain, pos, b, off, n)
+            pos += n
+            return n
+        }
+
+        private fun readFully(buf: ByteArray): Boolean {
+            var offset = 0
+            while (offset < buf.size) {
+                val n = raw.read(buf, offset, buf.size - offset)
+                if (n < 0) return false
+                offset += n
+            }
+            return true
+        }
+
+        private fun fill(): Boolean {
+            val key = hapReadKey ?: return false
+            val lengthPrefix = ByteArray(2)
+            if (!readFully(lengthPrefix)) return false
+            val length = (lengthPrefix[0].toInt() and 0xFF) or ((lengthPrefix[1].toInt() and 0xFF) shl 8)
+            val sealed = ByteArray(length + 16)
+            if (!readFully(sealed)) return false
+            val nonce = ByteArray(12)
+            for (i in 0..7) nonce[4 + i] = ((hapReadNonce shr (i * 8)) and 0xFF).toByte()
+            plain = AirPlay2Crypto.chacha20Poly1305Decrypt(
+                key, nonce,
+                sealed.copyOfRange(0, length),
+                lengthPrefix,
+                sealed.copyOfRange(length, sealed.size)
+            )
+            pos = 0
+            hapReadNonce++
+            return plain.isNotEmpty()
         }
     }
 
