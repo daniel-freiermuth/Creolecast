@@ -17,6 +17,7 @@ object TlvUtil {
     const val TLV_PERMISSIONS = 0x0B
     const val TLV_FRAGMENT_DATA = 0x0C
     const val TLV_FRAGMENT_LAST = 0x0D
+    const val TLV_ACL = 0x12
     const val TLV_FLAGS = 0x13
 
     // Standard HAP TLV8: type(1B) + length(1B, max 255) + value.

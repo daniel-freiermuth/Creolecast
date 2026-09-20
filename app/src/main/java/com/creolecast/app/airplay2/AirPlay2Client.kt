@@ -38,6 +38,10 @@ class AirPlay2Client(
     companion object {
         private const val TAG = "AirPlay2Client"
         private const val PUBKEY_3072_SIZE = 384
+
+        /** X-Apple-HKP pairing types. */
+        private const val HKP_TRANSIENT = 4
+        private const val HKP_SCREEN_CAPTURE = 5
     }
 
     var eventListener: EventListener? = null
@@ -232,11 +236,12 @@ class AirPlay2Client(
             val srp = SRP6aClient(attemptPin, "Pair-Setup", secureRandom)
             val m1 = srp.buildM1(attemptTransient)
 
-            val resp1 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m1, attemptTransient)
+            val hkpType = if (attemptTransient) HKP_TRANSIENT else HKP_SCREEN_CAPTURE
+            val resp1 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m1, hkpType)
             Log.d(TAG, "Pair-setup M1 response: ${resp1.code}")
             if (resp1.code == 200) {
                 val m3 = srp.processM2(resp1.body ?: return false) ?: return false
-                val resp2 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m3, attemptTransient)
+                val resp2 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m3, hkpType)
                 if (resp2.code != 200) { Log.e(TAG, "pair-setup M3 failed: ${resp2.code}"); continue }
 
                 if (!srp.verifyM4(resp2.body ?: return false)) {
@@ -248,8 +253,8 @@ class AirPlay2Client(
                 // throwaway pair.
                 if (!attemptTransient) {
                     val creds = pairingCredentials()
-                    val m5 = srp.buildM5(creds) ?: continue
-                    val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, false)
+                    val m5 = srp.buildM5(creds, includeScreenCaptureAcl = hkpType == HKP_SCREEN_CAPTURE) ?: continue
+                    val resp3 = sendPairingRequest("POST", "/pair-setup", "application/pairing+tlv8", m5, hkpType)
                     if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
                     val serverKey = srp.verifyM6(resp3.body ?: return false)
                     if (serverKey == null) { Log.e(TAG, "pair-setup M6 verification failed"); continue }
@@ -770,9 +775,8 @@ class AirPlay2Client(
         return sendRequest("$method $path HTTP/1.1", contentType, body)
     }
 
-    private fun sendPairingRequest(method: String, path: String, contentType: String?, body: ByteArray?, isTransient: Boolean): HttpResponse {
-        return sendRequest("$method $path HTTP/1.1", contentType, body,
-            if (isTransient) "X-Apple-HKP" to "4" else "X-Apple-HKP" to "3")
+    private fun sendPairingRequest(method: String, path: String, contentType: String?, body: ByteArray?, hkpType: Int): HttpResponse {
+        return sendRequest("$method $path HTTP/1.1", contentType, body, "X-Apple-HKP" to hkpType.toString())
     }
 
     private fun sendRtspRequest(method: String, url: String, contentType: String?, body: ByteArray?): HttpResponse {

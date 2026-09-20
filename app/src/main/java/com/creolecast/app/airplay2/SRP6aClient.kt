@@ -18,6 +18,10 @@ class SRP6aClient(
 
         /** tlvFlags value for transient pairing: uint32 LE 0x00000010. */
         val TRANSIENT_FLAGS = byteArrayOf(0x10, 0x00, 0x00, 0x00)
+
+        /** OPACK {"com.apple.ScreenCapture": true}, required by HKP type 5. */
+        val SCREEN_CAPTURE_ACL = byteArrayOf(0xE1.toByte(), 0x57) +
+            "com.apple.ScreenCapture".toByteArray(Charsets.UTF_8) + byteArrayOf(0x01)
     }
 
     private val digest = SHA512Digest()
@@ -142,7 +146,7 @@ class SRP6aClient(
      * pair must be the persisted one, because pair-verify M3 signs with it on
      * every later connection.
      */
-    fun buildM5(credentials: AirPlay2Credentials): ByteArray? {
+    fun buildM5(credentials: AirPlay2Credentials, includeScreenCaptureAcl: Boolean = false): ByteArray? {
         val k = sharedKeyBytes ?: return null
         val edPub = credentials.ed25519Public
         val saltSet = "Pair-Setup-Encrypt-Salt".toByteArray(Charsets.UTF_8)
@@ -160,16 +164,22 @@ class SRP6aClient(
         val signData = deviceX + deviceIdBytes + edPub
         val signature = AirPlay2Crypto.ed25519SignWithSeed(credentials.ed25519Seed, signData)
 
-        val deviceInfoTlv = TlvUtil.build(
-            TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
-            TlvUtil.TLV_SIGNATURE to signature
-        )
-
-        // Append public key TLV after device info TLV
-        val pubKeyTlv = TlvUtil.build(
-            TlvUtil.TLV_PUBLIC_KEY to edPub
-        )
-        val plaintext = deviceInfoTlv + pubKeyTlv
+        // Sub-TLV order matches Apple's senders: identifier, public key,
+        // signature, then the ACL for screen-capture pairing.
+        val plaintext = if (includeScreenCaptureAcl) {
+            TlvUtil.build(
+                TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
+                TlvUtil.TLV_PUBLIC_KEY to edPub,
+                TlvUtil.TLV_SIGNATURE to signature,
+                TlvUtil.TLV_ACL to SCREEN_CAPTURE_ACL
+            )
+        } else {
+            TlvUtil.build(
+                TlvUtil.TLV_IDENTIFIER to deviceIdBytes,
+                TlvUtil.TLV_PUBLIC_KEY to edPub,
+                TlvUtil.TLV_SIGNATURE to signature
+            )
+        }
 
         // Fixed nonce: 00 00 00 00 "PS-Msg05"
         val nonce = ByteArray(12)
