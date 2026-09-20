@@ -637,11 +637,15 @@ class AirPlay2Client(
         Log.d(TAG, "Transport: audio=$audioRemotePort ctrl=$controlRemotePort timing=$timingRemotePort")
     }
 
+    /**
+     * ALAC "verbatim" (uncompressed) frame: a 23-bit element header with
+     * hasSize set, the 32-bit sample count, each little-endian stereo sample
+     * byte-swapped to big-endian, then the 3-bit end tag.
+     */
     private fun alacEncodeUncompressed(pcm: ByteArray): ByteArray {
-        // Replicates alac_encode_uncompressed from alac_wrapper.cpp in pure Kotlin.
-        // Writes a 23-bit ALAC uncompressed frame header, then byte-swaps each
-        // little-endian stereo sample to big-endian, all packed into a bit stream.
-        val out = ByteArray(3 + pcm.size + 1)
+        val samples = pcm.size / (2 * 2)
+        val totalBits = 23 + 32 + pcm.size * 8 + 3
+        val out = ByteArray((totalBits + 7) / 8)
         var p = 0
         var bpos = 0
 
@@ -660,8 +664,19 @@ class AirPlay2Client(
             }
         }
 
-        writeBits(1, 3); writeBits(0, 4); writeBits(0, 8)
-        writeBits(0, 4); writeBits(0, 1); writeBits(0, 2); writeBits(1, 1)
+        // writeBits carries at most one byte boundary, so nothing wider than
+        // 8 bits may be written in a single call.
+        writeBits(1, 3)          // tag: channel pair element (stereo)
+        writeBits(0, 4)          // elementInstanceTag
+        writeBits(0, 8)          // unused (12 bits, part 1)
+        writeBits(0, 4)          // unused (12 bits, part 2)
+        writeBits(1, 1)          // hasSize
+        writeBits(0, 2)          // extraBytes (16-bit, no shift)
+        writeBits(1, 1)          // verbatim
+        writeBits((samples ushr 24) and 0xFF, 8)
+        writeBits((samples ushr 16) and 0xFF, 8)
+        writeBits((samples ushr 8) and 0xFF, 8)
+        writeBits(samples and 0xFF, 8)
 
         var i = 0
         while (i < pcm.size) {
