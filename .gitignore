@@ -2,6 +2,11 @@
 .gradle
 /local.properties
 /keystore.properties
+# Signing keys: never commit these. Losing them is recoverable only by
+# publishing under a new applicationId; leaking them lets anyone ship an
+# update your users' devices will accept.
+*.keystore
+*.jks
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
