@@ -69,6 +69,9 @@ class SRP6aClient(
         val state = parsed[TlvUtil.TLV_STATE]?.firstOrNull()?.get(0) ?: return null
         if (state != 2.toByte()) return null
         val salt = parsed[TlvUtil.TLV_SALT]?.firstOrNull() ?: return null
+        // HAP fixes the pair-setup salt at 16 bytes; any other length means the
+        // peer is not speaking this protocol and the proof would be garbage.
+        if (salt.size != 16) return null
         val serverB = parsed[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull() ?: return null
         val bValue = BigInteger(1, serverB)
         // RFC 5054 §3.1: abort if B mod N == 0 - a malicious/compromised peer could pick
