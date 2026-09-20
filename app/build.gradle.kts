@@ -40,8 +40,8 @@ android {
         applicationId = "com.creolecast.app"
         minSdk = 34
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.1.7"
+        versionCode = 15
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
