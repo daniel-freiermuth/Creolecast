@@ -52,9 +52,9 @@ class AirPlay2Client(
     private val socket = Socket()
     private var output: OutputStream? = null
     private var input: InputStream? = null
-    private var localAddress: String = "0.0.0.0"
     private var sessionUrl: String = ""
     private val sessionUuid = UUID.randomUUID()
+    private val streamConnectionId = secureRandom.nextLong() and 0x7FFFFFFFFFFFFFFFL
     private var cseq = 0
 
     private val timingSocket = DatagramSocket(0)
@@ -141,9 +141,9 @@ class AirPlay2Client(
             socket.soTimeout = 10000
             output = socket.getOutputStream()
             input = HapInputStream(socket.getInputStream())
-            localAddress = socket.localAddress.hostAddress ?: "0.0.0.0"
-            val urlHost = if (localAddress.contains(':')) "[$localAddress]" else localAddress
-            sessionUrl = "rtsp://$urlHost/$sessionUuid"
+            // The session is addressed by the receiver's own host and port plus
+            // the stream connection id, not by the sender's local address.
+            sessionUrl = "rtsp://$host:$port/$streamConnectionId"
             sequence = secureRandom.nextInt(0xFFFF)
             rtpTimestamp = secureRandom.nextInt()
 
@@ -462,7 +462,10 @@ class AirPlay2Client(
     }
 
     private fun sendRecord(): Boolean {
-        val resp = sendRtspRequest("RECORD", sessionUrl, null, null)
+        val resp = sendRtspRequest(
+            "RECORD", sessionUrl, null, null,
+            extraHeaders = listOf("Range" to "npt=0-", "RTP-Info" to "seq=0;rtptime=0")
+        )
         Log.d(TAG, "RECORD response: code=${resp.code}")
         return resp.code == 200 || resp.code == 201
     }
@@ -825,17 +828,23 @@ class AirPlay2Client(
     }
 
     private fun sendPairingRequest(method: String, path: String, contentType: String?, body: ByteArray?, hkpType: Int): HttpResponse {
-        return sendRequest("$method $path RTSP/1.0", contentType, body, "X-Apple-HKP" to hkpType.toString())
+        return sendRequest("$method $path RTSP/1.0", contentType, body, listOf("X-Apple-HKP" to hkpType.toString()))
     }
 
-    private fun sendRtspRequest(method: String, url: String, contentType: String?, body: ByteArray?): HttpResponse {
-        return sendRequest("$method $url RTSP/1.0", contentType, body)
+    private fun sendRtspRequest(
+        method: String,
+        url: String,
+        contentType: String?,
+        body: ByteArray?,
+        extraHeaders: List<Pair<String, String>> = emptyList()
+    ): HttpResponse {
+        return sendRequest("$method $url RTSP/1.0", contentType, body, extraHeaders)
     }
 
-    private fun sendRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeader: Pair<String, String>? = null): HttpResponse {
+    private fun sendRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeaders: List<Pair<String, String>> = emptyList()): HttpResponse {
         synchronized(this) {
             val out = output ?: return HttpResponse(0, emptyMap(), null)
-            val req = buildRequest(requestLine, contentType, body, extraHeader)
+            val req = buildRequest(requestLine, contentType, body, extraHeaders)
             // Headers and body are one plaintext blob for framing purposes.
             val frame = req.toByteArray(Charsets.UTF_8) + (body ?: ByteArray(0))
             writeFramed(out, frame)
@@ -921,7 +930,7 @@ class AirPlay2Client(
         }
     }
 
-    private fun buildRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeader: Pair<String, String>? = null): String {
+    private fun buildRequest(requestLine: String, contentType: String?, body: ByteArray?, extraHeaders: List<Pair<String, String>> = emptyList()): String {
         val sb = StringBuilder()
         sb.append("$requestLine\r\n")
         sb.append("CSeq: ${++cseq}\r\n")
@@ -930,7 +939,7 @@ class AirPlay2Client(
         sb.append("DACP-ID: $dacpId\r\n")
         sb.append("Active-Remote: $activeRemote\r\n")
         if (sessionId != null) sb.append("Session: $sessionId\r\n")
-        if (extraHeader != null) sb.append("${extraHeader.first}: ${extraHeader.second}\r\n")
+        for ((k, v) in extraHeaders) sb.append("$k: $v\r\n")
         if (contentType != null && body != null && body.isNotEmpty()) {
             sb.append("Content-Type: $contentType\r\n")
         }
@@ -1026,13 +1035,14 @@ class AirPlay2Client(
         }
     }
 
+    /** POST /feedback every 2 s; the receiver's feedback timeout is far under 25 s. */
     private fun startKeepAliveLoop() {
-        keepAliveThread = thread(name = "ap2-keepalive") {
+        keepAliveThread = thread(name = "ap2-keepalive", isDaemon = true) {
             while (running) {
                 try {
-                    sendRtspRequest("POST", "$sessionUrl/feedback", null, ByteArray(0))
+                    sendHttpRequest("POST", "/feedback", null, null)
                 } catch (_: Exception) {}
-                Thread.sleep(25000)
+                try { Thread.sleep(2000) } catch (e: InterruptedException) { return@thread }
             }
         }
     }
