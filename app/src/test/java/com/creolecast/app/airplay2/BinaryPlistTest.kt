@@ -72,11 +72,50 @@ class BinaryPlistTest {
     }
 
     @Test
-    fun `makeSessionPlist produces valid plist with required keys`() {
+    fun `NTP session plist advertises a timing port`() {
         val uuid = java.util.UUID.randomUUID()
-        val decoded = BinaryPlist.decode(BinaryPlist.makeSessionPlist(uuid, "AA:BB:CC:DD:EE:FF", 12345))
+        val decoded = BinaryPlist.decode(
+            BinaryPlist.makeSessionPlist(
+                sessionUuid = uuid,
+                deviceId = "AA:BB:CC:DD:EE:FF",
+                name = "CreoleCast",
+                model = "Linux",
+                sourceVersion = "280.33",
+                timingProtocol = "NTP",
+                timingPort = 12345
+            )
+        )
         assertEquals("AA:BB:CC:DD:EE:FF", decoded["deviceID"])
+        assertEquals("AA:BB:CC:DD:EE:FF", decoded["macAddress"])
+        assertEquals("NTP", decoded["timingProtocol"])
         assertEquals(12345L, decoded["timingPort"])
+        // PTP-only keys must be absent, or an NTP receiver rejects SETUP.
+        assertNull(decoded["timingPeerInfo"])
+        assertNull(decoded["timingPeerList"])
+    }
+
+    @Test
+    fun `PTP session plist carries peer info instead of a timing port`() {
+        val uuid = java.util.UUID.randomUUID()
+        val decoded = BinaryPlist.decode(
+            BinaryPlist.makeSessionPlist(
+                sessionUuid = uuid,
+                deviceId = "AA:BB:CC:DD:EE:FF",
+                name = "CreoleCast",
+                model = "Linux",
+                sourceVersion = "980.71.1",
+                timingProtocol = "PTP",
+                timingPort = 12345,
+                timingPeerId = "AA:BB:CC:DD:EE:FF",
+                timingPeerAddress = "192.168.1.5"
+            )
+        )
         assertEquals("PTP", decoded["timingProtocol"])
+        assertNull("PTP sessions must not advertise a timing port", decoded["timingPort"])
+        val peer = decoded["timingPeerInfo"] as? Map<*, *>
+        assertNotNull(peer)
+        assertEquals("AA:BB:CC:DD:EE:FF", peer!!["ID"])
+        assertEquals(listOf("192.168.1.5"), peer["Addresses"])
+        assertEquals(1, (decoded["timingPeerList"] as? List<*>)?.size)
     }
 }

@@ -1,10 +1,11 @@
 name: Build APK
 
+# Runs on PRs directly, and on main as a required precondition of
+# release.yml - which is why it is also callable.
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_call:
 
 jobs:
   build:
@@ -34,5 +35,5 @@ jobs:
       - name: Upload release APK (unsigned)
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
+          name: release-apk-unsigned
           path: app/build/outputs/apk/release/*.apk

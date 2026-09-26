@@ -14,16 +14,16 @@ Categories:
   - Internet
 License: GPL-3.0-only
 AuthorName: Daniel Freiermuth
-SourceCode: https://github.com/daniel-freiermuth/AriaCast-app
-IssueTracker: https://github.com/daniel-freiermuth/AriaCast-app/issues
-Changelog: https://github.com/daniel-freiermuth/AriaCast-app/releases
+SourceCode: https://github.com/daniel-freiermuth/Creolecast
+IssueTracker: https://github.com/daniel-freiermuth/Creolecast/issues
+Changelog: https://github.com/daniel-freiermuth/Creolecast/releases
 
 AutoName: CreoleCast
 
 RepoType: git
-Repo: https://github.com/daniel-freiermuth/AriaCast-app.git
+Repo: https://github.com/daniel-freiermuth/Creolecast.git
 
-Binaries: https://github.com/daniel-freiermuth/AriaCast-app/releases/download/v%v/CreoleCast-%v.apk
+Binaries: https://github.com/daniel-freiermuth/Creolecast/releases/download/v%v/CreoleCast-%v.apk
 
 Builds:
   - versionName: 1.0.0

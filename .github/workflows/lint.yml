@@ -1,10 +1,11 @@
 name: Lint & Checks
 
+# Runs on PRs directly, and on main as a required precondition of
+# release.yml - which is why it is also callable.
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_call:
 
 jobs:
   lint:

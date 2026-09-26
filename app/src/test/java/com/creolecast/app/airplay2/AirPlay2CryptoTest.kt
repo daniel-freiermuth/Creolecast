@@ -94,33 +94,54 @@ class AirPlay2CryptoTest {
 
     @Test
     fun `ed25519 sign and verify round trip`() {
-        val kp = AirPlay2Crypto.generateEd25519KeyPair()
+        val seed = AirPlay2Crypto.generateEd25519Seed()
         val msg = "AirPlay 2 pairing".toByteArray(Charsets.UTF_8)
-        val sig = AirPlay2Crypto.ed25519Sign(kp, msg)
-        assertTrue(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.getEd25519PublicKey(kp), msg, sig))
+        val sig = AirPlay2Crypto.ed25519SignWithSeed(seed, msg)
+        assertTrue(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed), msg, sig))
         assertEquals(64, sig.size)
     }
 
     @Test
     fun `ed25519 wrong public key fails verification`() {
-        val kp1 = AirPlay2Crypto.generateEd25519KeyPair()
-        val kp2 = AirPlay2Crypto.generateEd25519KeyPair()
+        val seed1 = AirPlay2Crypto.generateEd25519Seed()
+        val seed2 = AirPlay2Crypto.generateEd25519Seed()
         val msg = "test".toByteArray()
-        val sig = AirPlay2Crypto.ed25519Sign(kp1, msg)
-        assertFalse(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.getEd25519PublicKey(kp2), msg, sig))
+        val sig = AirPlay2Crypto.ed25519SignWithSeed(seed1, msg)
+        assertFalse(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed2), msg, sig))
     }
 
     @Test
     fun `ed25519 tampered message fails verification`() {
-        val kp = AirPlay2Crypto.generateEd25519KeyPair()
-        val sig = AirPlay2Crypto.ed25519Sign(kp, "original".toByteArray())
-        assertFalse(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.getEd25519PublicKey(kp), "tampered".toByteArray(), sig))
+        val seed = AirPlay2Crypto.generateEd25519Seed()
+        val sig = AirPlay2Crypto.ed25519SignWithSeed(seed, "original".toByteArray())
+        assertFalse(
+            AirPlay2Crypto.ed25519Verify(
+                AirPlay2Crypto.ed25519PublicFromSeed(seed), "tampered".toByteArray(), sig
+            )
+        )
     }
 
     @Test
-    fun `ed25519 public key is 32 bytes`() {
-        val kp = AirPlay2Crypto.generateEd25519KeyPair()
-        assertEquals(32, AirPlay2Crypto.getEd25519PublicKey(kp).size)
+    fun `ed25519 seed and public key are 32 bytes`() {
+        val seed = AirPlay2Crypto.generateEd25519Seed()
+        assertEquals(32, seed.size)
+        assertEquals(32, AirPlay2Crypto.ed25519PublicFromSeed(seed).size)
+    }
+
+    @Test
+    fun `a persisted seed reproduces the same identity`() {
+        // The whole point of storing a seed: pair-setup M5 registers this key
+        // and a later pair-verify M3 must sign with the identical one.
+        val seed = AirPlay2Crypto.generateEd25519Seed()
+        val msg = "pair-verify M3".toByteArray()
+        assertArrayEquals(
+            AirPlay2Crypto.ed25519PublicFromSeed(seed),
+            AirPlay2Crypto.ed25519PublicFromSeed(seed.copyOf())
+        )
+        assertArrayEquals(
+            AirPlay2Crypto.ed25519SignWithSeed(seed, msg),
+            AirPlay2Crypto.ed25519SignWithSeed(seed.copyOf(), msg)
+        )
     }
 
     // --- Curve25519 ---
@@ -159,15 +180,5 @@ class AirPlay2CryptoTest {
 
         // Regression proof: old sequence nonce repeats at 65536 (65536 & 0xFFFF = 0)
         assertTrue("Old nonce wraps at 65536", oldSeqNonce(0).contentEquals(oldSeqNonce(65536 and 0xFFFF)))
-    }
-
-    // --- PairKeysResult ---
-
-    @Test
-    fun `PairKeysResult counter increments atomically`() {
-        val keys = AirPlay2Crypto.PairKeysResult(ByteArray(32), ByteArray(32), 0L, 0L)
-        assertEquals(0L, keys.encryptionCounter++)
-        assertEquals(1L, keys.encryptionCounter++)
-        assertEquals(2L, keys.encryptionCounter)
     }
 }
