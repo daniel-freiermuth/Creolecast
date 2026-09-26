@@ -24,11 +24,24 @@
   <ul>
     <li><b>System-Wide Capture:</b> Works with <i>any (No DRM)</i> app.</li>
     <li><b>Automatic Discovery:</b> Instant detection of AriaCast, snapcast, AirPlay and DLNA devices on your network.</li>
-    <li><b>Rich Metadata Sync:</b> Pushes track title, artist, and album art to receivers in real-time.</li>
+    <li><b>Rich Metadata Sync:</b> Pushes track title, artist, and album art to receivers in real-time. Requires optional notification access &mdash; see below.</li>
     <li><b>Ongoing Notification:</b> See what's playing and stop casting without opening the app.</li>
   </ul>
 </div>
 <hr />
+
+<h2>🔐 About notification access</h2>
+<p>
+  CreoleCast asks for notification access, and it is worth being clear about why.
+  It is the only way an app can reach track metadata, artwork and the
+  play/pause/skip controls.
+</p>
+<p>
+  The listener checks a single field, <code>category == "transport"</code>, to notice that a
+  media app changed. Notification titles, text and contents are never read. The permission is
+  <b>optional</b>: casting works without it, you simply lose metadata and remote control.
+  Full rationale in <a href="docs/permissions.md">docs/permissions.md</a>.
+</p>
 
 
 <h2>🎵 Audio Source Compatibility</h2>

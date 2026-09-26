@@ -10,6 +10,15 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Notification access is the only way a third-party app can reach
+         MediaSessionManager.getActiveSessions(), which needs the ComponentName of
+         an enabled NotificationListenerService. That session is where track
+         metadata, artwork and transport controls come from; MediaProjection hands
+         us an anonymous PCM stream that carries none of it.
+         MediaNotificationListener reads no notification content - it only checks
+         category == "transport" as a hint to re-query the session list.
+         Optional: casting works without it, minus metadata and remote control.
+         See docs/permissions.md. -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <!-- Casting holds a PARTIAL_WAKE_LOCK for the whole session (see
