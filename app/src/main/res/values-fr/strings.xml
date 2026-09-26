@@ -66,12 +66,6 @@
     <string name="not_casting">Pas de diffusion</string>
     <string name="unknown">Inconnu</string>
     <string name="connecting">Connexion en cours…</string>
-    <!-- Tile Service -->
-    <string name="tile_tap_to_cast">Appuyer pour diffuser</string>
-    <string name="tile_discovering">Découverte…</string>
-    <string name="tile_connecting">Connexion…</string>
-    <string name="tile_casting">Diffusion…</string>
-    <string name="tile_error">Une erreur est survenue</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">Journaux de paquets</string>
     <string name="packet_logs_desc">Voir les journaux détaillés des paquets réseau pour le débogage</string>

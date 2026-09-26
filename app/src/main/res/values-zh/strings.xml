@@ -60,12 +60,6 @@
     <string name="not_casting">未在投放</string>
     <string name="unknown">未知</string>
     <string name="connecting">正在连接…</string>
-    <!-- Tile Service -->
-    <string name="tile_tap_to_cast">点击以投放</string>
-    <string name="tile_discovering">正在发现…</string>
-    <string name="tile_connecting">正在连接…</string>
-    <string name="tile_casting">正在投放…</string>
-    <string name="tile_error">发生错误</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">数据包日志</string>
     <string name="packet_logs_desc">查看用于调试的详细网络数据包日志</string>

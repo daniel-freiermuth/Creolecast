@@ -60,12 +60,6 @@
     <string name="not_casting">Niet aan het casten</string>
     <string name="unknown">Onbekend</string>
     <string name="connecting">Verbinden…</string>
-    <!-- Tile Service -->
-    <string name="tile_tap_to_cast">Tik om te casten</string>
-    <string name="tile_discovering">Ontdekken…</string>
-    <string name="tile_connecting">Verbinden…</string>
-    <string name="tile_casting">Casten…</string>
-    <string name="tile_error">Er is een fout opgetreden</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">Pakketlogs</string>
     <string name="packet_logs_desc">Bekijk gedetailleerde netwerkpakketlogs voor foutopsporing</string>

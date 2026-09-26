@@ -25,7 +25,7 @@
     <li><b>System-Wide Capture:</b> Works with <i>any (No DRM)</i> app.</li>
     <li><b>Automatic Discovery:</b> Instant detection of AriaCast, snapcast, AirPlay and DLNA devices on your network.</li>
     <li><b>Rich Metadata Sync:</b> Pushes track title, artist, and album art to receivers in real-time.</li>
-    <li><b>Quick Settings Tile:</b> Start casting directly from your notification shade.</li>
+    <li><b>Ongoing Notification:</b> See what's playing and stop casting without opening the app.</li>
   </ul>
 </div>
 <hr />

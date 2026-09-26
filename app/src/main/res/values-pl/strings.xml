@@ -52,11 +52,6 @@
     <string name="not_casting">Brak przesyłania</string>
     <string name="unknown">Nieznane</string>
     <string name="connecting">Łączenie…</string>
-    <string name="tile_tap_to_cast">Dotknij aby przesyłać</string>
-    <string name="tile_discovering">Odkrywanie…</string>
-    <string name="tile_connecting">Łączenie…</string>
-    <string name="tile_casting">Przesyłanie…</string>
-    <string name="tile_error">Powstał błąd</string>
     <string name="packet_logs">Dzienniki pakietów</string>
     <string name="packet_logs_desc">Wyświetl szczegółowe dzienniki pakietów sieciowych do debugowania</string>
     <string name="search_logs">Przeszukaj dzienniki…</string>

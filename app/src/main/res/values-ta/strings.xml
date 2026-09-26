@@ -44,11 +44,6 @@
     <string name="not_casting">நடிக்கவில்லை</string>
     <string name="unknown">தெரியவில்லை</string>
     <string name="connecting">இணைக்கிறது…</string>
-    <string name="tile_tap_to_cast">அனுப்ப தட்டவும்</string>
-    <string name="tile_discovering">கண்டுபிடிக்கிறது…</string>
-    <string name="tile_connecting">இணைக்கிறது…</string>
-    <string name="tile_casting">நடிப்பு…</string>
-    <string name="tile_error">பிழை ஏற்பட்டது</string>
     <string name="packet_logs">பாக்கெட் பதிவுகள்</string>
     <string name="packet_logs_desc">பிழைத்திருத்தத்திற்கான விரிவான பிணைய பாக்கெட் பதிவுகளைப் பார்க்கவும்</string>
     <string name="search_logs">பதிவுகளைத் தேடு…</string>

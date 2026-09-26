@@ -57,11 +57,6 @@
     <string name="not_casting">Non stai Trasmettendo</string>
     <string name="unknown">Sconosciuto</string>
     <string name="connecting">Connessione in corso...</string>
-    <string name="tile_tap_to_cast">Premi per Trasmettere</string>
-    <string name="tile_discovering">Trovando...</string>
-    <string name="tile_connecting">Connettendo...</string>
-    <string name="tile_casting">Trasmettendo...</string>
-    <string name="tile_error">C\'è un errore</string>
     <string name="packet_logs">Log dei pacchetti</string>
     <string name="packet_logs_desc">Visualizza i log dettagliati dei pacchetti di rete per il debug</string>
     <string name="search_logs">Cerca Log</string>

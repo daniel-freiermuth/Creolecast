@@ -1,7 +1,6 @@
 <resources>
     <string name="app_name" translatable="false">CreoleCast</string>
     <string name="app_version" translatable="false">1.1.7</string>
-    <string name="tile_label" translatable="false">CreoleCast</string>
     <string name="ver" translatable="false">CreoleCast 1.1.7</string>
 
     <!-- Update Manager -->
@@ -78,12 +77,6 @@
     <string name="unknown">Unknown</string>
     <string name="connecting">Connecting…</string>
 
-    <!-- Tile Service -->
-    <string name="tile_tap_to_cast">Tap to cast</string>
-    <string name="tile_discovering">Discovering…</string>
-    <string name="tile_connecting">Connecting…</string>
-    <string name="tile_casting">Casting…</string>
-    <string name="tile_error">Error occurred</string>
 
     <!-- Packet Log Activity -->
     <string name="packet_logs">Packet Logs</string>
