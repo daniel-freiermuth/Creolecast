@@ -21,10 +21,17 @@ internal object CastRoutes {
      * so the platform's uniqueness requirement is enforced here rather than trusted.
      */
     fun routesFor(servers: List<Server>, volume: Int): List<MediaRoute2Info> {
-        val routes = servers.map { server -> routeInfo(server, volume) }.distinctBy { it.id }
+        val routes = publishableServers(servers).map { server -> routeInfo(server, volume) }
+            .distinctBy { it.id }
         Log.d(TAG, "Publishing ${routes.size} routes: ${routes.map { it.name }}")
         return routes
     }
+
+    /** MediaRoute2Info.Builder throws on an empty name, which would take the whole
+     *  process down from a discovery callback. Discovery can yield one — an AriaCast
+     *  UDP reply without "server_name" is stored with name "" — so drop those here. */
+    fun publishableServers(servers: List<Server>): List<Server> =
+        servers.filter { it.name.isNotEmpty() }
 
     fun sessionInfo(
         sessionId: String,
