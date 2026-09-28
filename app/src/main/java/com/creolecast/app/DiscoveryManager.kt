@@ -548,10 +548,12 @@ class DiscoveryManager(private val context: Context) {
             // name spoofing would redirect a user who trusts a familiar name into
             // casting to an attacker's box instead. Key it separately and disambiguate
             // the display name so both stay visible rather than one clobbering the other.
-            val existingSameName = servers[name]
+            // AirPlay entries are stored under "name::platform", so look them up that way.
+            val platformSuffix = if (platform == "AirPlay" || platform == "AirPlay2") "::$platform" else ""
+            val existingSameName = servers["$name$platformSuffix"]
             val spoofedName = existingSameName != null && existingSameName.host != hostAddress
             val baseKey = if (spoofedName) "$name@$hostAddress" else name
-            val key = if (platform == "AirPlay" || platform == "AirPlay2") "$baseKey::$platform" else baseKey
+            val key = "$baseKey$platformSuffix"
             val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
 
             val existing = servers[key]
