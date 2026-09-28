@@ -110,6 +110,7 @@ class AirPlay2Client(
     private var usePtp = false
     private var useStreamConnections = false
     private var ptpTimelineId = 0L
+    private var ptpClock: PtpMediaClock? = null
 
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
@@ -557,6 +558,7 @@ class AirPlay2Client(
             timingPeerAddress = localAddress
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
+        val receivedAt = System.nanoTime()
         if (resp.code != 200) { Log.e(TAG, "SETUP session failed: ${resp.code}"); return false }
         sessionId = resp.headers["Session"]?.substringBefore(";")?.trim()
             ?: sessionUuid.toString().uppercase()
@@ -565,6 +567,12 @@ class AirPlay2Client(
             Log.e(TAG, "PTP SETUP response omitted timingPeerInfo.ClockID")
             return false
         }
+        // TimeAnnounce must carry a time on the receiver's PTP timeline, not
+        // our wall clock (mirror.go configurePTPClock).
+        ptpClock = if (!usePtp) null else PtpMediaClock.fromSetupHeaders(resp.headers, receivedAt)
+            ?: PtpMediaClock.fromLocalClock(receivedAt).also {
+                Log.w(TAG, "SETUP response lacks X-Apple clock headers; using local boot time")
+            }
         return true
     }
 
@@ -755,7 +763,8 @@ class AirPlay2Client(
      */
     private fun sendSyncPacket() {
         if (controlRemotePort <= 0) return
-        val networkTime = currentNtpTime()
+        val ptpClock = ptpClock
+        if (usePtp && ptpClock == null) return
         val packet = ByteArray(if (usePtp) 28 else 20)
         packet[0] = (if (syncPacketSent) 0x80 else 0x90).toByte()
         packet[1] = (if (usePtp) 0xD7 else 0xD4).toByte()
@@ -763,12 +772,12 @@ class AirPlay2Client(
         packet[3] = 4
         syncPacketSent = true
         writeUInt32(packet, 4, rtpTimestamp - LATENCY_SAMPLES)
-        if (usePtp) {
-            writeUInt64(packet, 8, ptpNanoseconds(networkTime))
+        if (ptpClock != null) {
+            writeUInt64(packet, 8, ptpClock.nanosAt(System.nanoTime()))
             writeUInt32(packet, 16, rtpTimestamp)
             writeUInt64(packet, 20, ptpTimelineId)
         } else {
-            writeUInt64(packet, 8, networkTime)
+            writeUInt64(packet, 8, currentNtpTime())
             writeUInt32(packet, 16, rtpTimestamp)
         }
         try {
@@ -776,13 +785,6 @@ class AirPlay2Client(
                 DatagramPacket(packet, packet.size, InetAddress.getByName(host), controlRemotePort)
             )
         } catch (_: Exception) {}
-    }
-
-    /** seconds.32 fixed point -> nanoseconds (audio.go ptpNanoseconds). */
-    private fun ptpNanoseconds(timestamp: Long): Long {
-        val seconds = timestamp ushr 32
-        val fraction = timestamp and 0xFFFFFFFFL
-        return seconds * 1_000_000_000L + (fraction * 1_000_000_000L ushr 32)
     }
 
     /**
