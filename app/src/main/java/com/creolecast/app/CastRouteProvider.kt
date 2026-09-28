@@ -31,6 +31,12 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         private const val TAG = "CastRouteProvider"
         private const val SESSION_ID_PREFIX = "creolecast-session-"
         private const val VOLUME_MAX = 30
+
+        /** MediaRoute2Info.Builder throws on an empty name, which would take the whole
+         *  process down from a discovery callback. Discovery can yield one — an AriaCast
+         *  UDP reply without "server_name" is stored with name "" — so drop those here. */
+        internal fun publishableServers(servers: List<Server>): List<Server> =
+            servers.filter { it.name.isNotEmpty() }
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
@@ -104,7 +110,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         // process down from a discovery callback. Distinct discovered entries can still
         // collapse onto one id (same device answering on two discovery protocols), so
         // enforce the platform's uniqueness requirement here rather than trusting it.
-        val routes = servers.map { server -> buildRouteInfo(server) }.distinctBy { it.id }
+        val routes = publishableServers(servers).map { server -> buildRouteInfo(server) }.distinctBy { it.id }
         Log.d(TAG, "Publishing ${routes.size} routes: ${routes.map { it.name }}")
         notifyRoutes(routes)
     }
