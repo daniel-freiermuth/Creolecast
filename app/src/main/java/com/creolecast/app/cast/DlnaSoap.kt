@@ -8,6 +8,7 @@ import com.creolecast.app.TrackMetadata
  */
 internal object DlnaSoap {
     const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+    const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
 
     private const val ENVELOPE_OPEN =
         """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" """ +
@@ -39,6 +40,14 @@ internal object DlnaSoap {
         "<InstanceID>0</InstanceID>" +
             "<CurrentURI>${escapeXml(streamUrl)}</CurrentURI>" +
             "<CurrentURIMetaData>${escapeXml(metadataXml)}</CurrentURIMetaData>"
+    )
+
+    /** RenderingControl SetVolume of the Master channel to [volume] (0..100). */
+    fun setVolume(volume: Int): String = action(
+        RENDERING_CONTROL,
+        "SetVolume",
+        "<InstanceID>0</InstanceID><Channel>Master</Channel>" +
+            "<DesiredVolume>$volume</DesiredVolume>"
     )
 
     /** DIDL-Lite item describing the live stream at [streamUrl] with the current track. */
