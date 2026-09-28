@@ -65,6 +65,44 @@ class AirPlay2Client(
 
         /** 85 ms at 44100 Hz, truncated — latency.go samplesFor44k1. */
         private const val LATENCY_SAMPLES = 3748
+
+        /**
+         * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
+         * 28 bytes / 0xd7 plus the receiver's timeline id for PTP
+         * (audio.go sendSyncPacketAt). With [ptpClock] set, the announced time is
+         * [localNanos] mapped onto the receiver's PTP timeline; otherwise it is
+         * [ntpTime] (seconds.32 since 1900).
+         */
+        internal fun timeAnnouncePacket(
+            first: Boolean,
+            rtpTimestamp: Int,
+            ptpClock: PtpMediaClock?,
+            ptpTimelineId: Long,
+            localNanos: Long,
+            ntpTime: Long
+        ): ByteArray {
+            val packet = ByteArray(if (ptpClock != null) 28 else 20)
+            packet[0] = (if (first) 0x90 else 0x80).toByte()
+            packet[1] = (if (ptpClock != null) 0xD7 else 0xD4).toByte()
+            packet[2] = 0
+            packet[3] = 4
+            writeUInt32(packet, 4, rtpTimestamp - LATENCY_SAMPLES)
+            writeUInt64(packet, 8, ptpClock?.nanosAt(localNanos) ?: ntpTime)
+            writeUInt32(packet, 16, rtpTimestamp)
+            if (ptpClock != null) writeUInt64(packet, 20, ptpTimelineId)
+            return packet
+        }
+
+        private fun writeUInt32(buf: ByteArray, off: Int, v: Int) {
+            buf[off] = ((v shr 24) and 0xFF).toByte()
+            buf[off + 1] = ((v shr 16) and 0xFF).toByte()
+            buf[off + 2] = ((v shr 8) and 0xFF).toByte()
+            buf[off + 3] = (v and 0xFF).toByte()
+        }
+
+        private fun writeUInt64(buf: ByteArray, off: Int, v: Long) {
+            for (i in 0..7) buf[off + i] = ((v shr ((7 - i) * 8)) and 0xFF).toByte()
+        }
     }
 
     var eventListener: EventListener? = null
@@ -756,30 +794,20 @@ class AirPlay2Client(
         return header + payload
     }
 
-    /**
-     * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
-     * 28 bytes / 0xd7 plus the receiver's timeline id for PTP
-     * (audio.go sendSyncPacketAt).
-     */
+    /** Sends a TimeAnnounce ([timeAnnouncePacket]) on the control port. */
     private fun sendSyncPacket() {
         if (controlRemotePort <= 0) return
         val ptpClock = ptpClock
         if (usePtp && ptpClock == null) return
-        val packet = ByteArray(if (usePtp) 28 else 20)
-        packet[0] = (if (syncPacketSent) 0x80 else 0x90).toByte()
-        packet[1] = (if (usePtp) 0xD7 else 0xD4).toByte()
-        packet[2] = 0
-        packet[3] = 4
+        val packet = timeAnnouncePacket(
+            first = !syncPacketSent,
+            rtpTimestamp = rtpTimestamp,
+            ptpClock = ptpClock,
+            ptpTimelineId = ptpTimelineId,
+            localNanos = System.nanoTime(),
+            ntpTime = currentNtpTime()
+        )
         syncPacketSent = true
-        writeUInt32(packet, 4, rtpTimestamp - LATENCY_SAMPLES)
-        if (ptpClock != null) {
-            writeUInt64(packet, 8, ptpClock.nanosAt(System.nanoTime()))
-            writeUInt32(packet, 16, rtpTimestamp)
-            writeUInt64(packet, 20, ptpTimelineId)
-        } else {
-            writeUInt64(packet, 8, currentNtpTime())
-            writeUInt32(packet, 16, rtpTimestamp)
-        }
         try {
             controlSocket.send(
                 DatagramPacket(packet, packet.size, InetAddress.getByName(host), controlRemotePort)
@@ -1177,17 +1205,6 @@ class AirPlay2Client(
         val seconds = ms / 1000 + 2208988800L
         val fraction = ((ms % 1000) * 0x100000000L) / 1000
         return (seconds shl 32) or (fraction and 0xFFFFFFFFL)
-    }
-
-    private fun writeUInt32(buf: ByteArray, off: Int, v: Int) {
-        buf[off] = ((v shr 24) and 0xFF).toByte()
-        buf[off + 1] = ((v shr 16) and 0xFF).toByte()
-        buf[off + 2] = ((v shr 8) and 0xFF).toByte()
-        buf[off + 3] = (v and 0xFF).toByte()
-    }
-
-    private fun writeUInt64(buf: ByteArray, off: Int, v: Long) {
-        for (i in 0..7) buf[off + i] = ((v shr ((7 - i) * 8)) and 0xFF).toByte()
     }
 
     operator fun ByteArray.plus(other: ByteArray): ByteArray {
