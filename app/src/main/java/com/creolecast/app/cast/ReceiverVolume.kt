@@ -24,6 +24,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         private set
 
     private var mediaSession: MediaSession? = null
+    private val dlna = DlnaController(ctx)
 
     /**
      * Starts a MediaSession with a remote VolumeProvider so the phone's hardware volume
@@ -90,6 +91,14 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
             ctx.raop.sendVolume(dB)
             ctx.airPlay2.setVolume(dB)
             sendAriaCastVolume(dB)
+            sendDlnaVolume(dB)
+        }
+    }
+
+    private suspend fun sendDlnaVolume(dB: Double) {
+        val volume = dlnaVolumeForDb(dB)
+        ctx.destinations.value.filter { it.platform == "DLNA" }.forEach { dest ->
+            bestEffort("DLNA volume") { dlna.setVolume(dest, volume) }
         }
     }
 
@@ -109,5 +118,12 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
 
     companion object {
         const val MAX_STEPS = 30
+
+        /**
+         * Maps a receiver volume in dB (-30.0 silent to 0.0 max) to a UPnP RenderingControl
+         * volume (0..100). Multiplying before dividing makes whole-dB steps exact.
+         */
+        fun dlnaVolumeForDb(dB: Double): Int =
+            ((dB + DB_RANGE) * PERCENT_MAX / DB_RANGE).toInt().coerceIn(0, PERCENT_MAX)
     }
 }

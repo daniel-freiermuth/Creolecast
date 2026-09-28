@@ -13,7 +13,7 @@ import io.ktor.http.contentType
 
 /**
  * DLNA/UPnP casts: points the renderer's AVTransport at our WAV stream
- * ([WavStreamServer]) and keeps its track metadata current.
+ * ([WavStreamServer]), keeps its track metadata current and sets its volume.
  */
 internal class DlnaController(private val ctx: CastContext) {
     /** Stops whatever the renderer plays, then sets our stream as its URI and plays it. */
@@ -73,9 +73,20 @@ internal class DlnaController(private val ctx: CastContext) {
         }
     }
 
-    private suspend fun post(controlUrl: String, action: String, body: String) {
+    /** Sets the renderer's RenderingControl volume; a no-op if it advertised none. */
+    suspend fun setVolume(dest: CastDestination, volume: Int) {
+        val controlUrl = renderingControlUrl(dest.extra) ?: return
+        post(controlUrl, "SetVolume", DlnaSoap.setVolume(volume), DlnaSoap.RENDERING_CONTROL)
+    }
+
+    private suspend fun post(
+        controlUrl: String,
+        action: String,
+        body: String,
+        service: String = DlnaSoap.AV_TRANSPORT
+    ) {
         ctx.client.post(controlUrl) {
-            header("SoapAction", "\"${DlnaSoap.AV_TRANSPORT}#$action\"")
+            header("SoapAction", "\"$service#$action\"")
             contentType(ContentType.parse("text/xml; charset=utf-8"))
             setBody(body)
         }
@@ -86,6 +97,12 @@ internal class DlnaController(private val ctx: CastContext) {
         extra == null -> null
         extra.startsWith("http") -> extra
         else -> ExtraFields.parse(extra)["av_control"]
+    }
+
+    /** The RenderingControl URL: only ExtraFields [extra] (with `rc_control`) carry one. */
+    private fun renderingControlUrl(extra: String?): String? = when {
+        extra == null || extra.startsWith("http") -> null
+        else -> ExtraFields.parse(extra)["rc_control"]
     }
 
     private fun localStreamUrl(): String? =
