@@ -206,47 +206,12 @@ class DiscoveryManager(private val context: Context) {
         )
         
         synchronized(discoveredServers) {
-            // A different device advertising the same friendly name must not silently
-            // take over an already-discovered entry's host - that's exactly how mDNS
-            // name spoofing would redirect a user who trusts a familiar name into
-            // casting to an attacker's box instead. Key it separately and disambiguate
-            // the display name so both stay visible rather than one clobbering the other.
-            val existingSameName = discoveredServers[name]
-            val spoofedName = existingSameName != null && existingSameName.host != hostAddress
-            val baseKey = if (spoofedName) "$name@$hostAddress" else name
-            val key = if (platform == "AirPlay" || platform == "AirPlay2") "$baseKey::$platform" else baseKey
-            val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
-
-            val existing = discoveredServers[key]
-            if (existing != null && existing.platform == platform) {
-                if (platform == "AirPlay" || platform == "AirPlay2") {
-                    val isRaop = serviceInfo.serviceType.contains("_raop")
-                    discoveredServers[key] = if (isRaop) {
-                        candidate.copy(extra = mergeExtras(existing.extra, candidate.extra))
-                    } else {
-                        existing.copy(
-                            extra = mergeExtras(existing.extra, candidate.extra),
-                            version = if (candidate.version != "1.0") candidate.version else existing.version
-                        )
-                    }
-                } else {
-                    discoveredServers[key] = candidate
-                }
-            } else {
-                discoveredServers[key] = candidate
-            }
+            upsertResolved(discoveredServers, server, isRaop = serviceInfo.serviceType.contains("_raop"))
             _servers.value = discoveredServers.values.toList()
             if (_state.value != DiscoveryState.SCANNING) {
                 _state.value = DiscoveryState.FOUND
             }
         }
-    }
-
-    private fun mergeExtras(old: String?, new: String?): String? {
-        if (old == null) return new
-        if (new == null) return old
-        val merged = ExtraFields.parse(old) + ExtraFields.parse(new)
-        return ExtraFields.join(merged.toList())
     }
 
     fun startDiscovery() {
@@ -567,6 +532,52 @@ class DiscoveryManager(private val context: Context) {
             }
             val uri = try { java.net.URI(raw) } catch (e: Exception) { return null }
             return if (uri.host == expectedHost) raw else null
+        }
+
+        /**
+         * Stores a freshly resolved NSD [server] in [servers], merging it into an entry the
+         * same device already produced ([isRaop] tells the _raop._tcp record apart from the
+         * _airplay._tcp one, whose metadata is merged differently).
+         */
+        internal fun upsertResolved(servers: MutableMap<String, Server>, server: Server, isRaop: Boolean) {
+            val name = server.name
+            val hostAddress = server.host
+            val platform = server.platform
+            // A different device advertising the same friendly name must not silently
+            // take over an already-discovered entry's host - that's exactly how mDNS
+            // name spoofing would redirect a user who trusts a familiar name into
+            // casting to an attacker's box instead. Key it separately and disambiguate
+            // the display name so both stay visible rather than one clobbering the other.
+            val existingSameName = servers[name]
+            val spoofedName = existingSameName != null && existingSameName.host != hostAddress
+            val baseKey = if (spoofedName) "$name@$hostAddress" else name
+            val key = if (platform == "AirPlay" || platform == "AirPlay2") "$baseKey::$platform" else baseKey
+            val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
+
+            val existing = servers[key]
+            if (existing != null && existing.platform == platform) {
+                if (platform == "AirPlay" || platform == "AirPlay2") {
+                    servers[key] = if (isRaop) {
+                        candidate.copy(extra = mergeExtras(existing.extra, candidate.extra))
+                    } else {
+                        existing.copy(
+                            extra = mergeExtras(existing.extra, candidate.extra),
+                            version = if (candidate.version != "1.0") candidate.version else existing.version
+                        )
+                    }
+                } else {
+                    servers[key] = candidate
+                }
+            } else {
+                servers[key] = candidate
+            }
+        }
+
+        private fun mergeExtras(old: String?, new: String?): String? {
+            if (old == null) return new
+            if (new == null) return old
+            val merged = ExtraFields.parse(old) + ExtraFields.parse(new)
+            return ExtraFields.join(merged.toList())
         }
 
         /**
