@@ -2231,11 +2231,13 @@ class AudioCastService : Service() {
          * PCM rate the recorder is opened with for [platform].
          *
          * AirPlay 1 (RAOP) requires 44100 Hz — shairport-sync ignores SDP sample rate.
+         * AirPlay 2 streams ALAC/44100/16/2 (audioFormat 0x40000) with 44.1 kHz
+         * latency and RTP timestamps, so it has to be fed 44100 Hz PCM as well.
          * Android's AudioFlinger resamples internally when the capture rate
          * differs from the source, so this is transparent and correct.
          */
         internal fun captureSampleRate(platform: String?): Int =
-            if (platform == "AirPlay") 44100 else SAMPLE_RATE
+            if (platform == "AirPlay" || platform == "AirPlay2") 44100 else SAMPLE_RATE
     }
     /** Encode little-endian PCM into an ALAC uncompressed frame.
      *  Writes the 23-bit ALAC header, byte-swaps each stereo sample pair
