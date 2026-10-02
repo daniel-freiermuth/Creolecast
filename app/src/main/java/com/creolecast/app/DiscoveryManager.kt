@@ -50,6 +50,7 @@ class DiscoveryManager(
         putFound(server.name, server)
     }
     private val ssdpDiscovery = SsdpDiscovery(ioDispatcher, ::addDlnaRenderer)
+    private val holders = DiscoveryHolders()
 
     private fun createNsdListener() = object : NsdManager.DiscoveryListener {
         override fun onDiscoveryStarted(serviceType: String) {
@@ -197,7 +198,14 @@ class DiscoveryManager(
         }
     }
 
-    fun startDiscovery() {
+    /**
+     * Starts (or restarts) discovery. This manager is shared by the whole process (see
+     * [CreoleCastApp]); a component that needs discovery to keep running passes a [holder]
+     * name and later hands the same name to [stopDiscovery], so it never stops discovery
+     * under another holder. Without a holder this only restarts discovery (Refresh).
+     */
+    fun startDiscovery(holder: String? = null) {
+        holder?.let(holders::hold)
         stopDiscovery()
         synchronized(discoveredServers) {
             discoveredServers.clear()
@@ -288,7 +296,12 @@ class DiscoveryManager(
         }
     }
 
-    fun stopDiscovery() {
+    /**
+     * With a [holder], drops that holder's claim and stops discovery only once no holder is
+     * left. Without one, stops discovery unconditionally (used to restart it).
+     */
+    fun stopDiscovery(holder: String? = null) {
+        if (holder != null && !holders.release(holder)) return
         raopDiscovery?.stop()
         raopDiscovery = null
 
@@ -390,3 +403,23 @@ class DiscoveryManager(
 }
 
 enum class DiscoveryState { IDLE, SCANNING, FOUND, NONE }
+
+/**
+ * Tracks which components currently need the shared [DiscoveryManager] running, so one
+ * of them going away does not stop discovery under another.
+ */
+internal class DiscoveryHolders {
+    private val holders = mutableSetOf<String>()
+
+    @Synchronized
+    fun hold(holder: String) {
+        holders.add(holder)
+    }
+
+    /** Removes [holder] and returns true when nobody holds discovery any more. */
+    @Synchronized
+    fun release(holder: String): Boolean {
+        holders.remove(holder)
+        return holders.isEmpty()
+    }
+}

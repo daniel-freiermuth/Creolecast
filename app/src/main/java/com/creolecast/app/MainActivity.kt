@@ -54,6 +54,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverListAdapter: ServerAdapter
     private lateinit var sharedPreferences: SharedPreferences
 
+    companion object {
+        private const val DISCOVERY_HOLDER = "MainActivity"
+    }
+
     private val _audioCastServiceFlow = MutableStateFlow<AudioCastService?>(null)
     val audioCastServiceFlow = _audioCastServiceFlow.asStateFlow()
 
@@ -329,7 +333,7 @@ class MainActivity : AppCompatActivity() {
         Intent(this, AudioCastService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
         }
-        discoveryManager.startDiscovery()
+        discoveryManager.startDiscovery(DISCOVERY_HOLDER)
     }
 
     override fun onStop() {
@@ -342,7 +346,9 @@ class MainActivity : AppCompatActivity() {
             serviceStateJob?.cancel()
             serviceStateJob = null
         }
-        discoveryManager.stopDiscovery()
+        // The DiscoveryManager is shared with CastRouteProvider; only stop it if nobody
+        // else still needs it, or the system output picker stops seeing receivers.
+        discoveryManager.stopDiscovery(DISCOVERY_HOLDER)
     }
 
     override fun onResume() {
