@@ -64,7 +64,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         // Use the process-wide DiscoveryManager so already-found servers are
         // available immediately — no fresh mDNS scan needed on every service restart.
         discoveryManager = (application as CreoleCastApp).discoveryManager
-        discoveryManager?.startDiscovery()
+        discoveryManager?.startDiscovery(TAG)
         startObservingRoutes()
         Intent(this, AudioCastService::class.java).also {
             bindService(it, connection, Context.BIND_AUTO_CREATE)

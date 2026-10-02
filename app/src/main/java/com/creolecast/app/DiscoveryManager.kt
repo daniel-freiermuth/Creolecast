@@ -47,6 +47,7 @@ class DiscoveryManager(private val context: Context) {
     private var discoveryJob: Job? = null
     private val activeListeners = mutableListOf<NsdManager.DiscoveryListener>()
     private var raopDiscovery: RaopDiscovery? = null
+    private val holders = DiscoveryHolders()
 
     private fun createNsdListener() = object : NsdManager.DiscoveryListener {
         override fun onDiscoveryStarted(serviceType: String) {
@@ -247,6 +248,21 @@ class DiscoveryManager(private val context: Context) {
         if (new == null) return old
         val merged = ExtraFields.parse(old) + ExtraFields.parse(new)
         return ExtraFields.join(merged.toList())
+    }
+
+    /**
+     * Starts (or restarts) discovery on behalf of [holder]. This manager is shared by the
+     * whole process (see [CreoleCastApp]), so a holder that no longer needs discovery must
+     * [release] it rather than call [stopDiscovery], which would stop it for everyone.
+     */
+    fun startDiscovery(holder: String) {
+        holders.hold(holder)
+        startDiscovery()
+    }
+
+    /** Drops [holder]'s claim; discovery only stops once no holder is left. */
+    fun release(holder: String) {
+        if (holders.release(holder)) stopDiscovery()
     }
 
     fun startDiscovery() {
@@ -582,3 +598,23 @@ class DiscoveryManager(private val context: Context) {
 }
 
 enum class DiscoveryState { IDLE, SCANNING, FOUND, NONE }
+
+/**
+ * Tracks which components currently need the shared [DiscoveryManager] running, so one
+ * of them going away does not stop discovery under another.
+ */
+internal class DiscoveryHolders {
+    private val holders = mutableSetOf<String>()
+
+    @Synchronized
+    fun hold(holder: String) {
+        holders.add(holder)
+    }
+
+    /** Removes [holder] and returns true when nobody holds discovery any more. */
+    @Synchronized
+    fun release(holder: String): Boolean {
+        holders.remove(holder)
+        return holders.isEmpty()
+    }
+}
