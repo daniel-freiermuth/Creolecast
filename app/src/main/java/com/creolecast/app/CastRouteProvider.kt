@@ -61,7 +61,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         // Use the process-wide DiscoveryManager so already-found servers are
         // available immediately — no fresh mDNS scan needed on every service restart.
         discoveryManager = (application as CreoleCastApp).discoveryManager
-        discoveryManager?.startDiscovery()
+        discoveryManager?.startDiscovery(TAG)
         // Observe discovered servers and republish them as routes.
         discoveryJob?.cancel()
         discoveryJob = scope.launch {
