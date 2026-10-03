@@ -70,11 +70,11 @@ class DiscoveryManager(private val context: Context) {
                 serviceInfo.serviceName
             }
             val platform = when {
-                serviceInfo.serviceType.contains("_raop") -> "AirPlay"
-                serviceInfo.serviceType.contains("_airplay") -> "AirPlay2"
+                serviceInfo.serviceType.contains("_raop") -> CastPlatform.AIRPLAY
+                serviceInfo.serviceType.contains("_airplay") -> CastPlatform.AIRPLAY2
                 else -> null
             }
-            val nameToRemove = if (platform != null) "$baseName::$platform" else baseName
+            val nameToRemove = if (platform != null) "$baseName::${platform.label}" else baseName
             synchronized(discoveredServers) {
                 discoveredServers.remove(nameToRemove)
                 _servers.value = discoveredServers.values.toList()
@@ -147,7 +147,7 @@ class DiscoveryManager(private val context: Context) {
             return if (s.isEmpty()) null else s
         }
 
-        var platform = attrString("platform")
+        val platform: CastPlatform
         var model = attrString("model") ?: attrString("am")
         var deviceId = attrString("deviceid")
         val features = attrString("features")
@@ -161,7 +161,7 @@ class DiscoveryManager(private val context: Context) {
         val extraParts = mutableListOf<String>()
 
         if (serviceInfo.serviceType.contains("_raop")) {
-            platform = "AirPlay"
+            platform = CastPlatform.AIRPLAY
             if (name.contains("@")) {
                 val cleaned = name.substringAfter("@")
                 if (cleaned.isNotEmpty()) {
@@ -170,18 +170,21 @@ class DiscoveryManager(private val context: Context) {
                 if (deviceId == null) deviceId = originalName.substringBefore("@")
             }
         } else if (serviceInfo.serviceType.contains("_airplay")) {
-            platform = "AirPlay2"
+            platform = CastPlatform.AIRPLAY2
         } else if (serviceInfo.serviceType.contains("_googlecast")) {
-            platform = "Google Cast"
+            platform = CastPlatform.GOOGLE_CAST
             name = attrString("fn") ?: name
             model = attrString("md")
             attrString("st")?.let { extraParts.add(ExtraFields.encode("st", it)) }
             attrString("ca")?.let { extraParts.add(ExtraFields.encode("ca", it)) }
             attrString("ve")?.let { extraParts.add(ExtraFields.encode("ve", it)) }
         } else if (serviceInfo.serviceType.contains("_audiocast")) {
-            platform = "AriaCast"
+            platform = CastPlatform.ARIACAST
         } else if (serviceInfo.serviceType.contains("_snapcast")) {
-            platform = "Snapcast"
+            platform = CastPlatform.SNAPCAST
+        } else {
+            Log.e(TAG, "Ignoring ${serviceInfo.serviceName}: unexpected service type ${serviceInfo.serviceType}")
+            return
         }
         // Ensure name is never empty
         if (name.trim().isEmpty()) {
@@ -214,12 +217,13 @@ class DiscoveryManager(private val context: Context) {
             val existingSameName = discoveredServers[name]
             val spoofedName = existingSameName != null && existingSameName.host != hostAddress
             val baseKey = if (spoofedName) "$name@$hostAddress" else name
-            val key = if (platform == "AirPlay" || platform == "AirPlay2") "$baseKey::$platform" else baseKey
+            val isAirPlay = platform == CastPlatform.AIRPLAY || platform == CastPlatform.AIRPLAY2
+            val key = if (isAirPlay) "$baseKey::${platform.label}" else baseKey
             val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
 
             val existing = discoveredServers[key]
             if (existing != null && existing.platform == platform) {
-                if (platform == "AirPlay" || platform == "AirPlay2") {
+                if (isAirPlay) {
                     val isRaop = serviceInfo.serviceType.contains("_raop")
                     discoveredServers[key] = if (isRaop) {
                         candidate.copy(extra = mergeExtras(existing.extra, candidate.extra))
@@ -283,7 +287,7 @@ class DiscoveryManager(private val context: Context) {
                     codecs = listOf("PCM"),
                     sampleRate = device.sampleRate,
                     channels = 2,
-                    platform = "AirPlay",
+                    platform = CastPlatform.AIRPLAY,
                     extra = "et=${device.encryptionType};sr=${device.sampleRate};cn=${device.codec}"
                 )
                 scope.launch {
@@ -383,7 +387,7 @@ class DiscoveryManager(private val context: Context) {
             codecs = emptyList(),
             sampleRate = 48000,
             channels = 2,
-            platform = "Manual"
+            platform = CastPlatform.MANUAL
         )
         synchronized(discoveredServers) {
             discoveredServers[name] = server
@@ -472,7 +476,7 @@ class DiscoveryManager(private val context: Context) {
                     codecs = listOf("pcm"),
                     sampleRate = 48000,
                     channels = 2,
-                    platform = "DLNA",
+                    platform = CastPlatform.DLNA,
                     extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
                 )
                 synchronized(discoveredServers) {
@@ -512,7 +516,7 @@ class DiscoveryManager(private val context: Context) {
                         }
                         try {
                             val json = JSONObject(String(resp.data, 0, resp.length))
-                            val server = Server(name = json.optString("server_name"), host = resp.address.hostAddress ?: "", port = json.optInt("port"), version = "1.0", codecs = listOf("pcm"), sampleRate = 48000, channels = 2, platform = "AriaCast")
+                            val server = Server(name = json.optString("server_name"), host = resp.address.hostAddress ?: "", port = json.optInt("port"), version = "1.0", codecs = listOf("pcm"), sampleRate = 48000, channels = 2, platform = CastPlatform.ARIACAST)
                             synchronized(discoveredServers) {
                                 discoveredServers[server.name] = server
                                 _servers.value = discoveredServers.values.toList()
@@ -577,7 +581,7 @@ class DiscoveryManager(private val context: Context) {
          * port 0, so several renderers on one IP share that triple.
          */
         internal fun identityOf(server: Server): String =
-            "${server.host}:${server.port}:${server.platform ?: "unknown"}:${server.name}"
+            "${server.host}:${server.port}:${server.platform.label}:${server.name}"
     }
 }
 

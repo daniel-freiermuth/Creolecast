@@ -13,7 +13,7 @@ class AirPlay2CaptureRateTest {
 
     @Test
     fun `AirPlay 2 descriptor declares the rate the service captures at`() {
-        val captureRate = AudioCastService.captureSampleRate("AirPlay2")
+        val captureRate = AudioCastService.captureSampleRate(CastPlatform.AIRPLAY2)
         val decoded = BinaryPlist.decode(
             BinaryPlist.makeStreamPlist(
                 controlPort = 6001,
