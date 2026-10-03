@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
                     putExtra(AudioCastService.EXTRA_SERVER_HOST, server.host)
                     putExtra(AudioCastService.EXTRA_SERVER_PORT, server.port)
                     putExtra(AudioCastService.EXTRA_SERVER_NAME, server.name)
-                    putExtra(AudioCastService.EXTRA_SERVER_PLATFORM, server.platform)
+                    putExtra(AudioCastService.EXTRA_SERVER_PLATFORM, server.platform.label)
                     putExtra("com.creolecast.app.EXTRA_SERVER_EXTRA", server.extra)
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
@@ -257,7 +257,11 @@ class MainActivity : AppCompatActivity() {
                         serverListAdapter.setSelectedItem(servers.indexOf(found))
                     }
                 } else if (lastHost != null && selectedServer == null) {
-                    val lastPlatform = sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_PLATFORM, null)
+                    val lastPlatformLabel = sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_PLATFORM, null)
+                    val lastPlatform = CastPlatform.fromLabel(lastPlatformLabel)
+                    if (lastPlatformLabel != null && lastPlatform == null) {
+                        android.util.Log.e("MainActivity", "Ignoring unknown saved platform '$lastPlatformLabel'")
+                    }
                     val lastServer = servers.find { it.host == lastHost && (lastPlatform == null || it.platform == lastPlatform) }
                         ?: servers.find { it.host == lastHost }
                     if (lastServer != null) {
@@ -508,7 +512,7 @@ class ServerAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val server = servers[position]
         holder.serverName.text = server.name
-        holder.serverHost.text = if (server.platform != null) "${server.host} • ${server.platform}" else server.host
+        holder.serverHost.text = "${server.host} • ${server.platform.label}"
         
         val context = holder.itemView.context
         val colorRes = ContextCompat.getColor(context, R.color.accent_blue)
@@ -526,7 +530,7 @@ class ServerAdapter(
             holder.cardView.scaleY = 1.0f
         }
 
-        if (server.platform == "Manual") {
+        if (server.platform == CastPlatform.MANUAL) {
             holder.moreButton.setImageResource(android.R.drawable.ic_menu_delete)
             holder.moreButton.visibility = View.VISIBLE
             holder.moreButton.setOnClickListener { 
