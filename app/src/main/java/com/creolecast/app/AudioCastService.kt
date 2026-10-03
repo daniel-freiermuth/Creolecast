@@ -25,7 +25,7 @@ data class CastDestination(
     val name: String,
     val host: String,
     val port: Int,
-    val platform: String? = null,
+    val platform: CastPlatform,
     var delayMs: Int = 0,
     val extra: String? = null
 )
@@ -58,7 +58,7 @@ class AudioCastService @JvmOverloads constructor(
             activeDestinations.value.firstOrNull()?.name
         }
     val serverPort: Int get() = activeDestinations.value.firstOrNull()?.port ?: 0
-    val serverPlatform: String? get() = activeDestinations.value.firstOrNull()?.platform
+    val serverPlatform: CastPlatform? get() = activeDestinations.value.firstOrNull()?.platform
 
     val state: StateFlow<CastState> = cast.state.asStateFlow()
     val stats: StateFlow<CastingStats> = cast.stats.asStateFlow()
@@ -136,11 +136,16 @@ class AudioCastService @JvmOverloads constructor(
         val host = intent.getStringExtra(EXTRA_SERVER_HOST)
         val port = intent.getIntExtra(EXTRA_SERVER_PORT, 0)
         val name = intent.getStringExtra(EXTRA_SERVER_NAME)
-        val platform = intent.getStringExtra(EXTRA_SERVER_PLATFORM)
+        val platformLabel = intent.getStringExtra(EXTRA_SERVER_PLATFORM)
+        val platform = CastPlatform.fromLabel(platformLabel)
+        if (platform == null) {
+            Log.e(TAG, "Rejecting cast request: unknown platform '${platformLabel.orEmpty()}'")
+            return null
+        }
         val extra = intent.getStringExtra(EXTRA_SERVER_EXTRA)
         return if (host != null && port != 0 && name != null) {
             CastDestination(name, host, port, platform, extra = extra)
-        } else if (platform == "DLNA" && host != null && name != null) {
+        } else if (platform == CastPlatform.DLNA && host != null && name != null) {
             CastDestination(name, host, 0, platform, extra = extra)
         } else {
             null
@@ -219,9 +224,11 @@ class AudioCastService @JvmOverloads constructor(
          * Android's AudioFlinger resamples internally when the capture rate
          * differs from the source, so this is transparent and correct.
          */
-        internal fun captureSampleRate(platform: String?): Int = when (platform) {
-            "AirPlay", "AirPlay2" -> AIRPLAY_SAMPLE_RATE
-            else -> SAMPLE_RATE
+        internal fun captureSampleRate(platform: CastPlatform): Int = when (platform) {
+            CastPlatform.AIRPLAY, CastPlatform.AIRPLAY2 -> AIRPLAY_SAMPLE_RATE
+
+            CastPlatform.DLNA, CastPlatform.GOOGLE_CAST, CastPlatform.SNAPCAST,
+            CastPlatform.ARIACAST, CastPlatform.MANUAL -> SAMPLE_RATE
         }
     }
 }

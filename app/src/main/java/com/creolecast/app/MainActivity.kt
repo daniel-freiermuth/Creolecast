@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
+import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.Menu
 import android.view.MenuItem
@@ -99,7 +100,7 @@ class MainActivity : AppCompatActivity() {
                     putExtra(AudioCastService.EXTRA_SERVER_HOST, server.host)
                     putExtra(AudioCastService.EXTRA_SERVER_PORT, server.port)
                     putExtra(AudioCastService.EXTRA_SERVER_NAME, server.name)
-                    putExtra(AudioCastService.EXTRA_SERVER_PLATFORM, server.platform)
+                    putExtra(AudioCastService.EXTRA_SERVER_PLATFORM, server.platform.label)
                     putExtra("com.creolecast.app.EXTRA_SERVER_EXTRA", server.extra)
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
@@ -285,15 +286,18 @@ class MainActivity : AppCompatActivity() {
     private fun onServersChanged(servers: List<Server>) {
         serverListAdapter.submitList(servers)
 
+        val lastPlatformLabel =
+            sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_PLATFORM, null)
+        val lastPlatform = CastPlatform.fromLabel(lastPlatformLabel)
+        if (lastPlatformLabel != null && lastPlatform == null) {
+            Log.e(TAG, "Ignoring unknown saved platform '$lastPlatformLabel'")
+        }
         val serverToSelect = findServerToSelect(
             servers,
             current = selectedServer,
             isUserSelecting = isUserSelecting,
             lastHost = sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_HOST, null),
-            lastPlatform = sharedPreferences.getString(
-                AudioCastService.KEY_LAST_SERVER_PLATFORM,
-                null
-            )
+            lastPlatform = lastPlatform
         )
         if (serverToSelect != null) {
             selectedServer = serverToSelect
@@ -347,6 +351,10 @@ class MainActivity : AppCompatActivity() {
         refreshTrigger.value++
         syncSliders.update(audioCastService)
     }
+
+    companion object {
+        private const val TAG = "MainActivity"
+    }
 }
 
 /**
@@ -359,7 +367,7 @@ private fun findServerToSelect(
     current: Server?,
     isUserSelecting: Boolean,
     lastHost: String?,
-    lastPlatform: String?
+    lastPlatform: CastPlatform?
 ): Server? = when {
     isUserSelecting && current != null ->
         servers.find { it.host == current.host && it.platform == current.platform }

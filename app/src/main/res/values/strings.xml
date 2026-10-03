@@ -19,6 +19,7 @@
     <string name="servers">Servers</string>
     <string name="synchronization">Synchronization</string>
     <string name="sync_delay_label">%1$s (%2$dms)</string>
+    <string name="server_host_platform" translatable="false">%1$s • %2$s</string>
     <string name="remove_server">Remove server</string>
 
     <!-- Settings Activity -->

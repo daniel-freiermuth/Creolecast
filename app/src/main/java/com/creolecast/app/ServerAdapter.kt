@@ -28,10 +28,10 @@ class ServerAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val server = servers[position]
         holder.serverName.text = server.name
-        holder.serverHost.text =
-            if (server.platform != null) "${server.host} • ${server.platform}" else server.host
 
         val context = holder.itemView.context
+        holder.serverHost.text =
+            context.getString(R.string.server_host_platform, server.host, server.platform.label)
         val colorRes = ContextCompat.getColor(context, R.color.accent_blue)
 
         if (selectedItem == position) {
@@ -48,7 +48,7 @@ class ServerAdapter(
             holder.cardView.scaleY = 1.0f
         }
 
-        if (server.platform == "Manual") {
+        if (server.platform == CastPlatform.MANUAL) {
             holder.moreButton.setImageResource(android.R.drawable.ic_menu_delete)
             holder.moreButton.visibility = View.VISIBLE
             holder.moreButton.setOnClickListener {

@@ -59,7 +59,7 @@ internal class AudioCastBroadcastDiscovery(
             codecs = listOf("pcm"),
             sampleRate = 48000,
             channels = 2,
-            platform = "AriaCast"
+            platform = CastPlatform.ARIACAST
         )
     } catch (e: JSONException) {
         // Malformed reply from one sender - ignore just this packet and keep listening

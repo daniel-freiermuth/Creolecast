@@ -163,7 +163,7 @@ internal class SsdpDiscovery(
                 codecs = listOf("pcm"),
                 sampleRate = 48000,
                 channels = 2,
-                platform = "DLNA",
+                platform = CastPlatform.DLNA,
                 extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
             )
         }
