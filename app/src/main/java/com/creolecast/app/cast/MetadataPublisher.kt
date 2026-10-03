@@ -1,6 +1,7 @@
 package com.creolecast.app.cast
 
 import com.creolecast.app.CastDestination
+import com.creolecast.app.CastPlatform
 import com.creolecast.app.PacketDirection
 import com.creolecast.app.PacketLogger
 import com.creolecast.app.PacketType
@@ -86,19 +87,20 @@ internal class MetadataPublisher(private val ctx: CastContext, private val dlna:
         key: Pair<String?, String?>
     ) {
         when (dest.platform) {
-            "AirPlay" -> ctx.raop.sendMetadata(dest.host, metadata)
+            CastPlatform.AIRPLAY -> ctx.raop.sendMetadata(dest.host, metadata)
 
-            "AirPlay2" -> publishToAirPlay2(dest, metadata)
+            CastPlatform.AIRPLAY2 -> publishToAirPlay2(dest, metadata)
 
-            "DLNA" -> if (lastSentToDlna[dest.host] != key) {
+            CastPlatform.DLNA -> if (lastSentToDlna[dest.host] != key) {
                 dlna.updateMetadata(dest, metadata)
                 lastSentToDlna[dest.host] = key
             }
 
             // DIAL offers no metadata channel.
-            "Google Cast" -> Unit
+            CastPlatform.GOOGLE_CAST -> Unit
 
-            else -> publishToHttpEndpoint(dest, metadata)
+            CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL ->
+                publishToHttpEndpoint(dest, metadata)
         }
     }
 

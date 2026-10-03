@@ -2,6 +2,7 @@ package com.creolecast.app.cast
 
 import android.util.Log
 import com.creolecast.app.CastDestination
+import com.creolecast.app.CastPlatform
 import com.creolecast.app.MediaCommand
 import com.creolecast.app.PacketDirection
 import com.creolecast.app.PacketLogger
@@ -67,7 +68,7 @@ internal class AriaCastSession(private val ctx: CastContext, private val dest: C
                 PacketType.HANDSHAKE,
                 "Audio socket connected to ${dest.name} (${dest.host}:${dest.port})"
             )
-            if (dest.platform == "AriaCast" || awaitHandshake(session)) {
+            if (dest.platform == CastPlatform.ARIACAST || awaitHandshake(session)) {
                 ctx.markCasting()
                 streamAudio(session)
             }

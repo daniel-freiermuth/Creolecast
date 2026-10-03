@@ -3,6 +3,7 @@ package com.creolecast.app.cast
 import android.content.Context
 import android.content.SharedPreferences
 import com.creolecast.app.CastDestination
+import com.creolecast.app.CastPlatform
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -24,17 +25,17 @@ internal class ReceiverProtocols(
     /** Launches the session(s) streaming to [dest] as children of the cast's [scope]. */
     fun launch(scope: CoroutineScope, dest: CastDestination) {
         when (dest.platform) {
-            "DLNA" -> scope.launch { dlna.start(dest) }
+            CastPlatform.DLNA -> scope.launch { dlna.start(dest) }
 
-            "Google Cast" -> scope.launch { googleCast.start(dest) }
+            CastPlatform.GOOGLE_CAST -> scope.launch { googleCast.start(dest) }
 
-            "AirPlay" -> scope.launch { RaopSession.cast(ctx, dest, identity) }
+            CastPlatform.AIRPLAY -> scope.launch { RaopSession.cast(ctx, dest, identity) }
 
-            "AirPlay2" -> scope.launch { airPlay2.cast(dest) }
+            CastPlatform.AIRPLAY2 -> scope.launch { airPlay2.cast(dest) }
 
-            "Snapcast" -> scope.launch { SnapcastSession(ctx, dest).run() }
+            CastPlatform.SNAPCAST -> scope.launch { SnapcastSession(ctx, dest).run() }
 
-            else -> {
+            CastPlatform.ARIACAST, CastPlatform.MANUAL -> {
                 val session = AriaCastSession(ctx, dest)
                 scope.launch { session.runControl() }
                 scope.launch { session.runAudio() }
@@ -50,15 +51,17 @@ internal class ReceiverProtocols(
 
     private suspend fun stop(dest: CastDestination) {
         when (dest.platform) {
-            "AirPlay2" -> ctx.airPlay2[dest.host]?.teardown()
+            CastPlatform.AIRPLAY2 -> ctx.airPlay2[dest.host]?.teardown()
 
-            "DLNA" -> dlna.stop(dest)
+            CastPlatform.DLNA -> dlna.stop(dest)
 
-            "Google Cast" -> googleCast.stop(dest)
+            CastPlatform.GOOGLE_CAST -> googleCast.stop(dest)
 
-            "AirPlay" -> if (dest.port == RAOP_PORT || dest.name.contains("@")) {
+            CastPlatform.AIRPLAY -> if (dest.port == RAOP_PORT || dest.name.contains("@")) {
                 ctx.raop.teardown(dest)
             }
+
+            CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL -> Unit
         }
     }
 }

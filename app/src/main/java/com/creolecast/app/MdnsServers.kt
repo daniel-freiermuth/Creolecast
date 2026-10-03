@@ -5,22 +5,23 @@ package com.creolecast.app
  * and merged in [DiscoveryManager]'s server map.
  */
 internal object MdnsServers {
-    private const val AIRPLAY = "AirPlay"
-    private const val AIRPLAY_2 = "AirPlay2"
     private const val DEFAULT_VERSION = "1.0"
     private const val DEFAULT_SAMPLE_RATE = 48000
     private const val DEFAULT_CHANNELS = 2
 
-    /** Builds the [Server] a resolved service describes from its type, name and TXT record. */
+    /**
+     * Builds the [Server] a resolved service describes from its type, name and TXT record,
+     * or returns null for a service type that is not one of the subscribed receiver types.
+     */
     fun fromResolvedService(
         serviceType: String,
         serviceName: String,
         hostAddress: String,
         port: Int,
         attributes: Map<String, ByteArray?>
-    ): Server {
+    ): Server? {
         val txt = TxtRecord(attributes)
-        val identity = identify(serviceType, serviceName, txt)
+        val identity = identify(serviceType, serviceName, txt) ?: return null
         val extraParts = identity.castFields + encodePresent(
             listOf(
                 "model" to identity.model,
@@ -44,8 +45,8 @@ internal object MdnsServers {
     }
 
     /** AirPlay and AirPlay 2 entries for one device coexist, so their key names the platform. */
-    fun storageKey(baseKey: String, platform: String?): String =
-        platform?.takeIf(::isAirPlay)?.let { "$baseKey::$it" } ?: baseKey
+    fun storageKey(baseKey: String, platform: CastPlatform?): String =
+        platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
 
     /** The key a service that has disappeared was stored under. */
     fun lostServiceKey(serviceType: String, serviceName: String): String {
@@ -55,12 +56,7 @@ internal object MdnsServers {
         } else {
             serviceName
         }
-        val platform = when {
-            isRaop -> AIRPLAY
-            serviceType.contains("_airplay") -> AIRPLAY_2
-            else -> null
-        }
-        return storageKey(baseName, platform)
+        return storageKey(baseName, platformOf(serviceType))
     }
 
     /**
@@ -93,40 +89,45 @@ internal object MdnsServers {
         else -> ExtraFields.join((ExtraFields.parse(old) + ExtraFields.parse(new)).toList())
     }
 
-    private fun isAirPlay(platform: String?): Boolean = platform == AIRPLAY || platform == AIRPLAY_2
+    private fun isAirPlay(platform: CastPlatform): Boolean =
+        platform == CastPlatform.AIRPLAY || platform == CastPlatform.AIRPLAY2
 
-    private fun identify(serviceType: String, serviceName: String, txt: TxtRecord): Identity {
+    private fun identify(serviceType: String, serviceName: String, txt: TxtRecord): Identity? {
+        val platform = platformOf(serviceType) ?: return null
         val advertised = Identity(
             name = serviceName,
-            platform = txt["platform"],
+            platform = platform,
             model = txt["model"] ?: txt["am"],
             deviceId = txt["deviceid"]
         )
-        return when {
-            serviceType.contains("_raop") -> raopIdentity(serviceName, advertised)
+        return when (platform) {
+            CastPlatform.AIRPLAY -> raopIdentity(serviceName, advertised)
 
-            serviceType.contains("_airplay") -> advertised.copy(platform = AIRPLAY_2)
-
-            serviceType.contains("_googlecast") -> advertised.copy(
-                platform = "Google Cast",
+            CastPlatform.GOOGLE_CAST -> advertised.copy(
                 name = txt["fn"] ?: serviceName,
                 model = txt["md"],
                 castFields = encodePresent(listOf("st", "ca", "ve").map { it to txt[it] })
             )
 
-            serviceType.contains("_audiocast") -> advertised.copy(platform = "AriaCast")
-
-            serviceType.contains("_snapcast") -> advertised.copy(platform = "Snapcast")
-
-            else -> advertised
+            CastPlatform.AIRPLAY2, CastPlatform.ARIACAST, CastPlatform.SNAPCAST,
+            CastPlatform.DLNA, CastPlatform.MANUAL -> advertised
         }
+    }
+
+    /** The platform a subscribed service type speaks, or null for any other type. */
+    private fun platformOf(serviceType: String): CastPlatform? = when {
+        serviceType.contains("_raop") -> CastPlatform.AIRPLAY
+        serviceType.contains("_airplay") -> CastPlatform.AIRPLAY2
+        serviceType.contains("_googlecast") -> CastPlatform.GOOGLE_CAST
+        serviceType.contains("_audiocast") -> CastPlatform.ARIACAST
+        serviceType.contains("_snapcast") -> CastPlatform.SNAPCAST
+        else -> null
     }
 
     /** RAOP instance names are "<device id>@<friendly name>". */
     private fun raopIdentity(serviceName: String, advertised: Identity): Identity {
-        if (!serviceName.contains("@")) return advertised.copy(platform = AIRPLAY)
+        if (!serviceName.contains("@")) return advertised
         return advertised.copy(
-            platform = AIRPLAY,
             name = serviceName.substringAfter("@").ifEmpty { serviceName },
             deviceId = advertised.deviceId ?: serviceName.substringBefore("@")
         )
@@ -137,7 +138,7 @@ internal object MdnsServers {
 
     private data class Identity(
         val name: String,
-        val platform: String?,
+        val platform: CastPlatform,
         val model: String?,
         val deviceId: String?,
         // Google Cast TXT fields, already encoded for Server.extra.

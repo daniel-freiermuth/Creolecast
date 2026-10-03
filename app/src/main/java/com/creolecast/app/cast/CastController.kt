@@ -29,12 +29,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** How long TEARDOWN/stop requests get to reach the receivers before their sockets close. */
 private const val TEARDOWN_GRACE_MS = 2000L
 
-/** Platforms whose receiver volume follows the phone's hardware volume keys. */
-private val VOLUME_KEY_PLATFORMS = listOf("AirPlay", "AirPlay2", "AriaCast", "DLNA")
-
-/** Platforms whose receivers pull our HTTP WAV stream and artwork. */
-private val HTTP_STREAM_PLATFORMS = listOf("DLNA", "Google Cast", "AirPlay")
-
 /**
  * Runs one cast at a time for [AudioCastService]: foreground state, wake lock, phone
  * volume, MediaProjection capture, the local HTTP servers and the protocol sessions, and
@@ -88,7 +82,7 @@ internal class CastController(
 
         if (!enterForeground()) return
         wakeLock.acquire()
-        if (destination.platform in VOLUME_KEY_PLATFORMS) volume.startSession()
+        if (destination.platform.supportsVolumeSession) volume.startSession()
 
         // The MediaProjection token is single-use on Android 14+; obtain it once, before
         // any retries.
@@ -133,7 +127,7 @@ internal class CastController(
             putString(AudioCastService.KEY_LAST_SERVER_HOST, destination.host)
             putInt(AudioCastService.KEY_LAST_SERVER_PORT, destination.port)
             putString(AudioCastService.KEY_LAST_SERVER_NAME, destination.name)
-            putString(AudioCastService.KEY_LAST_SERVER_PLATFORM, destination.platform)
+            putString(AudioCastService.KEY_LAST_SERVER_PLATFORM, destination.platform.label)
         }
     }
 
@@ -186,7 +180,7 @@ internal class CastController(
             ctx.state.value = CastState.ERROR
             return
         }
-        if (destination.platform in HTTP_STREAM_PLATFORMS) {
+        if (destination.platform.pullsStreamOverHttp) {
             streamServer.start()
             artworkServer.start()
         }
