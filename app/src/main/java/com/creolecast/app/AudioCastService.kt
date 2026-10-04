@@ -626,10 +626,26 @@ class AudioCastService : Service() {
         }
     }
 
+    /** Marks the session as failed at the point of failure: logs to logcat and the packet log,
+     *  sets [CastState.ERROR] and refreshes the notification so the user sees the error. */
+    private fun failSession(dest: CastDestination, reason: String) {
+        Log.e(TAG, "Cannot start ${dest.platform} session for ${dest.name}: $reason")
+        PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "Cannot start ${dest.platform} session for ${dest.name}: $reason")
+        _state.value = CastState.ERROR
+        updateNotification()
+    }
+
     private suspend fun startDlnaSession(dest: CastDestination) {
         val (controlUrl, _) = getDlnaControlUrls(dest.extra)
-        if (controlUrl == null) return
-        val myIp = getLocalIpAddress() ?: return
+        if (controlUrl == null) {
+            failSession(dest, "device has no AVTransport control URL")
+            return
+        }
+        val myIp = getLocalIpAddress()
+        if (myIp == null) {
+            failSession(dest, "no local IPv4 address to serve the stream from")
+            return
+        }
         val streamUrl = "http://$myIp:$STREAM_PORT/stream.wav"
 
         try {
@@ -677,7 +693,11 @@ class AudioCastService : Service() {
     }
 
     private suspend fun startGoogleCastSession(dest: CastDestination) {
-        val myIp = getLocalIpAddress() ?: return
+        val myIp = getLocalIpAddress()
+        if (myIp == null) {
+            failSession(dest, "no local IPv4 address to serve the stream from")
+            return
+        }
         val streamUrl = "http://$myIp:$STREAM_PORT/stream.wav"
         
         try {
@@ -750,7 +770,11 @@ class AudioCastService : Service() {
     }
 
     private suspend fun startAirPlaySession(dest: CastDestination) {
-        val myIp = getLocalIpAddress() ?: return
+        val myIp = getLocalIpAddress()
+        if (myIp == null) {
+            failSession(dest, "no local IPv4 address to serve the stream from")
+            return
+        }
         try {
             _state.value = CastState.CONNECTING
 
