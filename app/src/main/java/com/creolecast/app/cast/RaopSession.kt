@@ -277,7 +277,7 @@ internal class RaopSession(
     companion object {
         /** Casts to [dest] over RAOP; a failure to even start ends in [CastState.ERROR]. */
         suspend fun cast(ctx: CastContext, dest: CastDestination, identity: AirPlayIdentity) {
-            val myIp = localIpv4Address() ?: return
+            val myIp = localIpv4Address() ?: return ctx.failStart(dest, NO_LOCAL_ADDRESS)
             try {
                 ctx.state.value = CastState.CONNECTING
                 // For audio-only casting RAOP (RTSP) is the most reliable and standard
