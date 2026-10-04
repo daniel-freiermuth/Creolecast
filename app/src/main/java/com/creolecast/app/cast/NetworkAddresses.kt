@@ -12,6 +12,9 @@ private val VIRTUAL_INTERFACE_MARKERS = listOf("tun", "ppp", "tap", "docker")
 /** Private address ranges, most likely LAN first. */
 private val PREFERRED_PREFIXES = listOf("192.168.", "10.", "172.")
 
+/** Session-start failure reason when [localIpv4Address] finds no address to serve from. */
+internal const val NO_LOCAL_ADDRESS = "no local IPv4 address to serve the stream from"
+
 /**
  * This device's IPv4 address on the local network, as receivers should use it to fetch
  * our HTTP stream and artwork, or null when there is none. Loopback, down and

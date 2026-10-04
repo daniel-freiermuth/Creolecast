@@ -321,7 +321,7 @@ internal class RaopSession(
             identity: AirPlayIdentity,
             passwords: AirPlayPasswords
         ) {
-            val myIp = localIpv4Address() ?: return
+            val myIp = localIpv4Address() ?: return ctx.failStart(dest, NO_LOCAL_ADDRESS)
             ctx.state.value = CastState.CONNECTING
             // For audio-only casting RAOP (RTSP) is the most reliable and standard
             // AirPlay transport, so it is used even for AirPlay 2 capable receivers.

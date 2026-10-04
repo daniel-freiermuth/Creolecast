@@ -1,9 +1,13 @@
 package com.creolecast.app.cast
 
+import android.util.Log
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.CastingStats
 import com.creolecast.app.MediaCommand
+import com.creolecast.app.PacketDirection
+import com.creolecast.app.PacketLogger
+import com.creolecast.app.PacketType
 import com.creolecast.app.TrackMetadata
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
@@ -70,6 +74,19 @@ internal class CastContext(
     /** Marks the cast as streaming and refreshes the notification. */
     fun markCasting() {
         state.value = CastState.CASTING
+        onStatusChanged()
+    }
+
+    /**
+     * Ends a session that cannot start because [reason] (a missing precondition) holds:
+     * logs it to logcat and the packet log, sets [CastState.ERROR] and refreshes the
+     * notification, so the cast does not sit in CONNECTING without explanation.
+     */
+    fun failStart(dest: CastDestination, reason: String) {
+        val message = "Cannot start ${dest.platform.label} session for ${dest.name}: $reason"
+        Log.e(LOG_TAG, message)
+        PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, message)
+        state.value = CastState.ERROR
         onStatusChanged()
     }
 
