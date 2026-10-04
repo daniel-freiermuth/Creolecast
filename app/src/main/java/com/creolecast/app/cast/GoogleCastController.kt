@@ -44,7 +44,7 @@ internal class GoogleCastController(
     suspend fun cast(dest: CastDestination) = withContext(ctx.ioDispatcher) {
         val myIp = localIpv4Address()
         if (myIp == null) {
-            ctx.state.value = CastState.ERROR
+            ctx.failStart(dest, NO_LOCAL_ADDRESS)
             return@withContext
         }
         val streamUrl = "http://$myIp:$STREAM_PORT/stream.wav"
