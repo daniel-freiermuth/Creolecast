@@ -2077,6 +2077,12 @@ class AudioCastService : Service() {
     }
     private fun stopRemoteSessions(destinations: List<CastDestination>): List<Job> {
         return destinations.map { dest ->
+            // Read the RAOP connection state now, on the caller's thread: cleanupSession()
+            // clears these maps right after calling us, and the coroutine below may not run
+            // until after that - in which case it would find no socket and skip TEARDOWN.
+            val raopSocket = raopSockets[dest.host]
+            val raopCSeq = raopCSeqs[dest.host]
+            val raopSession = raopSessions[dest.host]
             scope.launch {
                 try {
                     when (dest.platform) {
@@ -2098,13 +2104,13 @@ class AudioCastService : Service() {
                         }
                         "AirPlay" -> {
                             if (dest.port == 5000 || dest.name.contains("@")) {
-                                val socket = raopSockets[dest.host]
+                                val socket = raopSocket
                                 val output = socket?.getOutputStream()
                                 if (output != null) {
                                     synchronized(output) {
-                                        val cseq = raopCSeqs[dest.host] ?: 1
+                                        val cseq = raopCSeqs[dest.host] ?: raopCSeq ?: 1
                                         sendRtspRequest(output, "TEARDOWN", dest.host, dest.port, cseq, mapOf(
-                                            "Session" to (raopSessions[dest.host] ?: ""),
+                                            "Session" to (raopSession ?: ""),
                                             "User-Agent" to "AirPlay/366.0"
                                         ))
                                     }
