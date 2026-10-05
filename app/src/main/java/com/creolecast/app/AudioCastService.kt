@@ -171,7 +171,6 @@ class AudioCastService : Service() {
             }
             install(WebSockets) {
                 pingIntervalMillis = 5000
-                maxFrameSize = Long.MAX_VALUE
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 10000
