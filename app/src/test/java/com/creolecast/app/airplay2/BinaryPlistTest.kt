@@ -136,6 +136,32 @@ class BinaryPlistTest {
     }
 
     @Test
+    fun `decodes 8-byte real from a receiver volume event`() {
+        // {"type": "volume", "value": -20.0} -- 0x23 marker, bits 0xC034000000000000
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d20102030454747970655576616c756556766f6c756d6523" +
+                    "c034000000000000080d12181f00000000000001010000000000000005000000" +
+                    "00000000000000000000000028"
+            )
+        )
+        assertEquals("volume", decoded["type"])
+        assertEquals(-20.0, decoded["value"])
+    }
+
+    @Test
+    fun `decodes 4-byte real`() {
+        // {"value": -7.5f} -- 0x22 marker, bits 0xC0F00000
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d101025576616c756522c0f00000080b1100000000000001" +
+                    "01000000000000000300000000000000000000000000000016"
+            )
+        )
+        assertEquals(-7.5, decoded["value"])
+    }
+
+    @Test
     fun `NTP session plist advertises a timing port`() {
         val uuid = java.util.UUID.randomUUID()
         val decoded = BinaryPlist.decode(

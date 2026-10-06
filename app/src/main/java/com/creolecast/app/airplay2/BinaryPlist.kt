@@ -252,7 +252,11 @@ object BinaryPlist {
                     if (bytes <= 4) readSizedInt(data, off + 1, bytes).toLong()
                     else readSizedLong(data, off + 1, bytes)
                 }
-                0x02, 0x03 -> readSizedInt(data, off + 1, 1 shl objSize).toDouble()
+                0x02, 0x03 -> when (val bytes = 1 shl objSize) {
+                    4 -> Float.fromBits(readSizedInt(data, off + 1, 4)).toDouble()
+                    8 -> Double.fromBits(readSizedLong(data, off + 1, 8))
+                    else -> throw IllegalArgumentException("unsupported real size $bytes")
+                }
                 0x04 -> {
                     val (cnt, pos) = resolveCount(off + 1, objSize)
                     data.copyOfRange(pos, pos + cnt)
