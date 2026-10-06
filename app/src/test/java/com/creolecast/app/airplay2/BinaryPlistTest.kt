@@ -71,6 +71,70 @@ class BinaryPlistTest {
         BinaryPlist.decode(ByteArray(10))
     }
 
+    // Golden vectors below come from Python's plistlib (FMT_BINARY), which
+    // writes the same bplist00 layout as CoreFoundation, or are hand-built and
+    // validated with plistlib.loads. They cover object kinds and trailer
+    // widths that BinaryPlist.encode never emits but receivers do.
+
+    @Test
+    fun `decodes UTF-16 string from a foreign plist`() {
+        // {"name": "Salon é"} -- non-ASCII forces a 0x6x UTF-16BE string object
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d10102546e616d656700530061006c006f006e002000e9" +
+                    "080b10000000000000010100000000000000030000000000000000000000000000001f"
+            )
+        )
+        assertEquals("Salon é", decoded["name"])
+    }
+
+    @Test
+    fun `decodes plist with 2-byte object refs and offsets`() {
+        // {"type": "volume", "eventPort": 7000}, offsetIntSize=2, objectRefSize=2
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d200010002000300045474797065596576656e74506f7274" +
+                    "56766f6c756d65111b5800080011001600200027000000000000020200000000" +
+                    "000000050000000000000000000000000000002a"
+            )
+        )
+        assertEquals(mapOf("type" to "volume", "eventPort" to 7000L), decoded)
+    }
+
+    @Test
+    fun `decodes nested SETUP response dict`() {
+        // {"eventPort": 50123, "timingPeerInfo": {"ClockID": 0x1122334455667788},
+        //  "streams": [{"type": 96, "dataPort": 6001, "controlPort": 6002}]}
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d3010203040508596576656e74506f72745e74696d696e67" +
+                    "50656572496e666f5773747265616d7311c3cbd1060757436c6f636b49441311" +
+                    "22334455667788a109d30a0b0c0d0e0f54747970655864617461506f72745b63" +
+                    "6f6e74726f6c506f72741060111771111772080f19283033363e474950555e6a" +
+                    "6c6f000000000000010100000000000000100000000000000000000000000000" +
+                    "0072"
+            )
+        )
+        assertEquals(50123L, decoded["eventPort"])
+        assertEquals(0x1122334455667788L, (decoded["timingPeerInfo"] as Map<*, *>)["ClockID"])
+        val stream = (decoded["streams"] as List<*>).single() as Map<*, *>
+        assertEquals(96L, stream["type"])
+        assertEquals(6001L, stream["dataPort"])
+        assertEquals(6002L, stream["controlPort"])
+    }
+
+    @Test
+    fun `decode returns empty map when root is not a dict`() {
+        // [1, 2]
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030a2010210011002080b0d0000000000000101000000000000" +
+                    "00030000000000000000000000000000000f"
+            )
+        )
+        assertTrue(decoded.isEmpty())
+    }
+
     @Test
     fun `NTP session plist advertises a timing port`() {
         val uuid = java.util.UUID.randomUUID()
@@ -118,4 +182,7 @@ class BinaryPlistTest {
         assertEquals(listOf("192.168.1.5"), peer["Addresses"])
         assertEquals(1, (decoded["timingPeerList"] as? List<*>)?.size)
     }
+
+    private fun hex(s: String): ByteArray =
+        s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }
