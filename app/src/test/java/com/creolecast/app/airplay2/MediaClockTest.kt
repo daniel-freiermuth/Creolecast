@@ -54,6 +54,35 @@ class MediaClockTest {
     }
 
     @Test
+    fun `a single clock header is not enough to anchor`() {
+        val receivedOnly = mapOf("X-Apple-RequestReceivedTimestamp" to "5000")
+        val processingOnly = mapOf("X-Apple-ProcessingTime" to "2")
+        assertNull(MediaClock.receiverClockTimestamp(receivedOnly))
+        assertNull(MediaClock.receiverClockTimestamp(processingOnly))
+        assertFalse(clock.configureFromSetup(1, receivedOnly, receivedAtNs = 0))
+        assertNull(clock.now())
+    }
+
+    @Test
+    fun `negative or non-numeric clock headers are rejected`() {
+        assertNull(MediaClock.receiverClockTimestamp(headers(-1, 0)))
+        assertNull(MediaClock.receiverClockTimestamp(headers(5_000, -3)))
+        assertNull(
+            MediaClock.receiverClockTimestamp(
+                mapOf("X-Apple-RequestReceivedTimestamp" to "soon", "X-Apple-ProcessingTime" to "1")
+            )
+        )
+    }
+
+    @Test
+    fun `clock headers whose sum overflows nanoseconds are rejected`() {
+        val maxMillis = Long.MAX_VALUE / 1_000_000L
+        assertNull(MediaClock.receiverClockTimestamp(headers(maxMillis + 1, 0)))
+        assertNull(MediaClock.receiverClockTimestamp(headers(maxMillis, 1)))
+        assertTrue(MediaClock.receiverClockTimestamp(headers(maxMillis, 0)) != null)
+    }
+
+    @Test
     fun `local clock maps the monotonic source one to one`() {
         nowNs = 42_000_000_000L
         clock.configureFromLocalClock(0x77)
