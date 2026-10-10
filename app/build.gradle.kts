@@ -102,7 +102,9 @@ detekt {
     allRules = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
     baseline = file("detekt-baseline.xml")
-    parallel = true
+    // Parallel analysis crashes 2.0.0-alpha.6 intermittently (ArrayIndexOutOfBounds in
+    // 2 of 4 runs; 5 of 5 pass without it). Re-enable once fixed upstream.
+    parallel = false
 }
 
 dependencies {
