@@ -116,7 +116,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
             .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
             .setVolumeMax(VOLUME_MAX)
             .setVolume(currentVolume)
-            .setDescription(server.platform ?: "AirPlay")
+            .setDescription(server.platform.label)
 
         builder.setType(MediaRoute2Info.TYPE_REMOTE_SPEAKER)
         return builder.build()
@@ -125,7 +125,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     // The name is part of the id because host+port+platform alone is not unique:
     // every DLNA entry carries port 0, so two renderers on one IP would collide.
     private fun routeIdFor(server: Server): String =
-        "${server.host}:${server.port}:${server.platform ?: "unknown"}:${server.name}"
+        "${server.host}:${server.port}:${server.platform.label}:${server.name}"
 
     // ── Volume ──────────────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     /** Must stay byte-identical to the [Server] overload above — the id produced here
      *  is handed to addSelectedRoute() and has to match a published route. */
     private fun routeIdFor(dest: CastDestination): String =
-        "${dest.host}:${dest.port}:${dest.platform ?: "unknown"}:${dest.name}"
+        "${dest.host}:${dest.port}:${dest.platform.label}:${dest.name}"
 
     // ── Session lifecycle (system-initiated via output picker) ───────────
 
