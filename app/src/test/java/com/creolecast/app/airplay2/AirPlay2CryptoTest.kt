@@ -1,7 +1,11 @@
 package com.creolecast.app.airplay2
 
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class AirPlay2CryptoTest {

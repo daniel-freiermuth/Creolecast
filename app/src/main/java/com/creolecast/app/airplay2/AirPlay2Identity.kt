@@ -6,9 +6,12 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Long-term HomeKit pairing identity this sender presents to one receiver. */
 class AirPlay2Credentials(
-    val pairingId: String, // stable UUID string, our controller identifier
-    val ed25519Seed: ByteArray, // 32 bytes, private
-    val ed25519Public: ByteArray // 32 bytes
+    // Stable UUID string, our controller identifier.
+    val pairingId: String,
+    // 32 bytes, private.
+    val ed25519Seed: ByteArray,
+    // 32 bytes.
+    val ed25519Public: ByteArray
 ) {
     companion object {
         fun generate(): AirPlay2Credentials {

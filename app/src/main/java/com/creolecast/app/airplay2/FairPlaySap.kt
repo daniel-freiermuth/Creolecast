@@ -1,3 +1,7 @@
+// Constant tables below are transcribed verbatim as hex strings from the reference
+// implementation so they can be compared against it; wrapping them would not help.
+@file:Suppress("ktlint:standard:max-line-length")
+
 package com.creolecast.app.airplay2
 
 import java.security.SecureRandom

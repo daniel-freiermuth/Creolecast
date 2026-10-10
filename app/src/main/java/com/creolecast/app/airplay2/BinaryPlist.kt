@@ -274,8 +274,7 @@ object BinaryPlist {
 
         val trailer = data.copyOfRange(data.size - 32, data.size)
         val buf = ByteBuffer.wrap(trailer).order(ByteOrder.BIG_ENDIAN)
-        val _unused6 = ByteArray(6)
-        buf.get(_unused6)
+        buf.position(6) // skip the unused trailer bytes
         val offsetIntSize = buf.get().toInt() and 0xFF
         val objectRefSize = buf.get().toInt() and 0xFF
         val numObjects = buf.getLong()
