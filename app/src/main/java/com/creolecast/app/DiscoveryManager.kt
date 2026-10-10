@@ -1,14 +1,15 @@
 package com.creolecast.app
 
 import android.content.Context
+import android.net.InetAddresses
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
-import android.util.Patterns
 import com.creolecast.app.raop.RaopDiscovery
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CoroutineScope
@@ -106,6 +107,8 @@ class DiscoveryManager(private val context: Context) {
         activeResolves++
 
         try {
+            // Deprecated in API 34; the migration to registerServiceInfoCallback is PR #36.
+            @Suppress("DEPRECATION")
             nsdManager.resolveService(
                 serviceInfo,
                 object : NsdManager.ResolveListener {
@@ -139,6 +142,9 @@ class DiscoveryManager(private val context: Context) {
     private fun handleResolvedService(serviceInfo: NsdServiceInfo) {
         val originalName = serviceInfo.serviceName ?: return
         var name = originalName
+
+        // Deprecated in API 34 in favour of hostAddresses; migrated together with PR #36.
+        @Suppress("DEPRECATION")
         val hostAddress = serviceInfo.host?.hostAddress ?: return
 
         if (hostAddress == "127.0.0.1" || hostAddress == "::1" || hostAddress.contains(
@@ -402,7 +408,7 @@ class DiscoveryManager(private val context: Context) {
      * valid IP address, true once the server has been merged into [servers].
      */
     fun addManualServer(host: String, port: Int, name: String): Boolean {
-        if (!Patterns.IP_ADDRESS.matcher(host).matches()) {
+        if (!isIpv4Literal(host)) {
             Log.w(TAG, "addManualServer: invalid host '$host'")
             return false
         }
@@ -423,6 +429,11 @@ class DiscoveryManager(private val context: Context) {
         Log.d(TAG, "Manually added server: $name @ $host:$port")
         return true
     }
+
+    // URLs are built as "http://$host:$port", so only IPv4 literals are accepted (an IPv6
+    // literal would need brackets), matching the previous Patterns.IP_ADDRESS check.
+    private fun isIpv4Literal(host: String): Boolean = InetAddresses.isNumericAddress(host) &&
+        InetAddresses.parseNumericAddress(host) is Inet4Address
 
     private suspend fun startSsdpDiscoveryLoop() = withContext(Dispatchers.IO) {
         val ssdpAddress = InetAddress.getByName("239.255.255.250")

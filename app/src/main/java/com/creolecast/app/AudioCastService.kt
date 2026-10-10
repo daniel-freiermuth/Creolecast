@@ -2277,10 +2277,11 @@ class AudioCastService : Service() {
                     }
                 }
             }
-            return list.find { it.hostAddress.startsWith("192.168.") }?.hostAddress
-                ?: list.find { it.hostAddress.startsWith("10.") }?.hostAddress
-                ?: list.find { it.hostAddress.startsWith("172.") }?.hostAddress
-                ?: list.firstOrNull()?.hostAddress
+            val hosts = list.mapNotNull { it.hostAddress }
+            return hosts.find { it.startsWith("192.168.") }
+                ?: hosts.find { it.startsWith("10.") }
+                ?: hosts.find { it.startsWith("172.") }
+                ?: hosts.firstOrNull()
         } catch (e: Exception) {}
         return null
     }
