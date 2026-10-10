@@ -4,6 +4,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.detekt)
 }
 
 // Release signing secrets live in keystore.properties, a git-ignored file at the repo
@@ -70,6 +71,17 @@ android {
     packaging {
         jniLibs { useLegacyPackaging = false }
     }
+}
+
+// Static analysis: every detekt rule (allRules), with type resolution via detektMain /
+// detektTest. Deviations live in config/detekt/detekt.yml; pre-existing findings are
+// grandfathered in the baseline files, so only new code has to be clean.
+detekt {
+    buildUponDefaultConfig = true
+    allRules = true
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    baseline = file("detekt-baseline.xml")
+    parallel = true
 }
 
 dependencies {
