@@ -34,10 +34,11 @@ object ExtraFields {
         if (extra.isNullOrEmpty()) return emptyMap()
         val result = LinkedHashMap<String, String>()
         for (part in splitUnescaped(extra, ';')) {
-            if (part.isEmpty()) continue
+            // An empty part has no unescaped '=' either, so it carries no field.
             val eqIdx = indexOfUnescaped(part, '=')
-            if (eqIdx < 0) continue
-            result[unescape(part.substring(0, eqIdx))] = unescape(part.substring(eqIdx + 1))
+            if (eqIdx >= 0) {
+                result[unescape(part.substring(0, eqIdx))] = unescape(part.substring(eqIdx + 1))
+            }
         }
         return result
     }
@@ -78,19 +79,23 @@ object ExtraFields {
         val current = StringBuilder()
         var i = 0
         while (i < s.length) {
-            if (s[i] == '\\' && i + 1 < s.length) {
-                current.append(s[i]).append(s[i + 1])
-                i += 2
-                continue
+            when {
+                s[i] == '\\' && i + 1 < s.length -> {
+                    current.append(s[i]).append(s[i + 1])
+                    i += 2
+                }
+
+                s[i] == delimiter -> {
+                    parts.add(current.toString())
+                    current.clear()
+                    i++
+                }
+
+                else -> {
+                    current.append(s[i])
+                    i++
+                }
             }
-            if (s[i] == delimiter) {
-                parts.add(current.toString())
-                current.clear()
-                i++
-                continue
-            }
-            current.append(s[i])
-            i++
         }
         parts.add(current.toString())
         return parts

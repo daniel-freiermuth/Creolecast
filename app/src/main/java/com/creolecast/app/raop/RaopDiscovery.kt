@@ -3,6 +3,8 @@ package com.creolecast.app.raop
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
+import java.io.IOException
+import java.net.InetAddress
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
@@ -38,55 +40,60 @@ class RaopDiscovery(private val context: Context) {
             return
         }
 
-        Thread {
-            try {
-                jmdns = JmDNS.create(localAddr)
-                jmdns?.addServiceListener(
-                    "_raop._tcp.local.",
-                    object : ServiceListener {
-                        override fun serviceAdded(event: ServiceEvent) {
-                            jmdns?.requestServiceInfo(event.type, event.name)
-                        }
+        Thread { startJmdns(localAddr, onDeviceFound) }.start()
+    }
 
-                        override fun serviceRemoved(event: ServiceEvent) {
-                            Log.d("RaopDiscovery", "Service removed: ${event.name}")
-                        }
+    // Body of the discovery thread: an exception escaping it would kill the process,
+    // and JmDNS start-up can fail in ways beyond its declared IOException.
+    @Suppress("TooGenericExceptionCaught")
+    private fun startJmdns(localAddr: InetAddress, onDeviceFound: (RaopDevice) -> Unit) {
+        try {
+            jmdns = JmDNS.create(localAddr)
+            jmdns?.addServiceListener(
+                "_raop._tcp.local.",
+                object : ServiceListener {
+                    override fun serviceAdded(event: ServiceEvent) {
+                        jmdns?.requestServiceInfo(event.type, event.name)
+                    }
 
-                        override fun serviceResolved(event: ServiceEvent) {
-                            val info = event.info
-                            val host = info.inetAddresses.firstOrNull()?.hostAddress ?: return
-                            val port = info.port
+                    override fun serviceRemoved(event: ServiceEvent) {
+                        Log.d("RaopDiscovery", "Service removed: ${event.name}")
+                    }
 
-                            // info.name is often "MAC@DeviceName", extract DeviceName
-                            val name = info.name.substringAfter("@")
+                    override fun serviceResolved(event: ServiceEvent) {
+                        val info = event.info
+                        val host = info.inetAddresses.firstOrNull()?.hostAddress ?: return
+                        val port = info.port
 
-                            val et = info.getPropertyString("et")?.toIntOrNull() ?: 0
-                            val sr = info.getPropertyString("sr")?.toIntOrNull() ?: 44100
-                            val cn = info.getPropertyString("cn")?.toIntOrNull() ?: 0
-                            val model = info.getPropertyString("am")
+                        // info.name is often "MAC@DeviceName", extract DeviceName
+                        val name = info.name.substringAfter("@")
 
-                            Log.d(
+                        val et = info.getPropertyString("et")?.toIntOrNull() ?: 0
+                        val sr = info.getPropertyString("sr")?.toIntOrNull() ?: 44100
+                        val cn = info.getPropertyString("cn")?.toIntOrNull() ?: 0
+                        val model = info.getPropertyString("am")
+
+                        Log.d(
+                            "RaopDiscovery",
+                            "Found RAOP device: $name at $host:$port (et=$et, sr=$sr, cn=$cn)"
+                        )
+
+                        // Capability check as requested
+                        if (et == 0 || (et and 1) != 0) {
+                            onDeviceFound(RaopDevice(name, host, port, model, et, sr, cn))
+                        } else {
+                            Log.w(
                                 "RaopDiscovery",
-                                "Found RAOP device: $name at $host:$port (et=$et, sr=$sr, cn=$cn)"
+                                "Device $name does not support RSA 1 encryption (et=$et), skipping"
                             )
-
-                            // Capability check as requested
-                            if (et == 0 || (et and 1) != 0) {
-                                onDeviceFound(RaopDevice(name, host, port, model, et, sr, cn))
-                            } else {
-                                Log.w(
-                                    "RaopDiscovery",
-                                    "Device $name does not support RSA 1 encryption (et=$et), skipping"
-                                )
-                            }
                         }
                     }
-                )
-                Log.i("RaopDiscovery", "JmDNS discovery started on $localAddr")
-            } catch (e: Exception) {
-                Log.e("RaopDiscovery", "Failed to start JmDNS", e)
-            }
-        }.start()
+                }
+            )
+            Log.i("RaopDiscovery", "JmDNS discovery started on $localAddr")
+        } catch (e: Exception) {
+            Log.e("RaopDiscovery", "Failed to start JmDNS", e)
+        }
     }
 
     fun stop() {
@@ -94,10 +101,12 @@ class RaopDiscovery(private val context: Context) {
             try {
                 jmdns?.close()
                 jmdns = null
-                multicastLock?.release()
+                // Reference-counted lock acquired once in start(); releasing it when no
+                // longer held would throw "under-locked".
+                multicastLock?.let { if (it.isHeld) it.release() }
                 multicastLock = null
                 Log.i("RaopDiscovery", "JmDNS discovery stopped")
-            } catch (e: Exception) {
+            } catch (e: IOException) {
                 Log.e("RaopDiscovery", "Error stopping JmDNS", e)
             }
         }.start()

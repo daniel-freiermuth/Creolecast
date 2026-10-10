@@ -7,11 +7,9 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.creolecast.app.raop.RaopDiscovery
-import java.net.DatagramPacket
-import java.net.DatagramSocket
 import java.net.Inet4Address
-import java.net.InetAddress
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,15 +18,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
-class DiscoveryManager(private val context: Context) {
+class DiscoveryManager(
+    private val context: Context,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+) {
 
     private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.IO + job)
+    private val scope = CoroutineScope(ioDispatcher + job)
 
     private val _servers = MutableStateFlow<List<Server>>(emptyList())
     val servers: StateFlow<List<Server>> = _servers.asStateFlow()
@@ -48,6 +46,10 @@ class DiscoveryManager(private val context: Context) {
     private var discoveryJob: Job? = null
     private val activeListeners = mutableListOf<NsdManager.DiscoveryListener>()
     private var raopDiscovery: RaopDiscovery? = null
+    private val audioCastDiscovery = AudioCastBroadcastDiscovery(ioDispatcher) { server ->
+        putFound(server.name, server)
+    }
+    private val ssdpDiscovery = SsdpDiscovery(ioDispatcher, ::addDlnaRenderer)
 
     private fun createNsdListener() = object : NsdManager.DiscoveryListener {
         override fun onDiscoveryStarted(serviceType: String) {
@@ -65,19 +67,8 @@ class DiscoveryManager(private val context: Context) {
 
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
             Log.d(TAG, "Service lost: ${serviceInfo.serviceName}")
-            val baseName = if (serviceInfo.serviceType.contains("_raop") &&
-                serviceInfo.serviceName.contains("@")
-            ) {
-                serviceInfo.serviceName.substringAfter("@")
-            } else {
-                serviceInfo.serviceName
-            }
-            val platform = when {
-                serviceInfo.serviceType.contains("_raop") -> "AirPlay"
-                serviceInfo.serviceType.contains("_airplay") -> "AirPlay2"
-                else -> null
-            }
-            val nameToRemove = if (platform != null) "$baseName::$platform" else baseName
+            val nameToRemove =
+                MdnsServers.lostServiceKey(serviceInfo.serviceType, serviceInfo.serviceName)
             synchronized(discoveredServers) {
                 discoveredServers.remove(nameToRemove)
                 _servers.value = discoveredServers.values.toList()
@@ -117,7 +108,7 @@ class DiscoveryManager(private val context: Context) {
                         activeResolves--
                         if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE) {
                             scope.launch {
-                                delay(1000)
+                                delay(RESOLVE_RETRY_DELAY_MS)
                                 resolveQueue.add(si)
                                 processResolveQueue()
                             }
@@ -133,93 +124,29 @@ class DiscoveryManager(private val context: Context) {
                     }
                 }
             )
-        } catch (e: Exception) {
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Could not resolve ${serviceInfo.serviceName}", e)
             activeResolves--
             processResolveQueue()
         }
     }
 
     private fun handleResolvedService(serviceInfo: NsdServiceInfo) {
-        val originalName = serviceInfo.serviceName ?: return
-        var name = originalName
+        val serviceName = serviceInfo.serviceName ?: return
 
         // Deprecated in API 34 in favour of hostAddresses; migrated together with PR #36.
         @Suppress("DEPRECATION")
-        val hostAddress = serviceInfo.host?.hostAddress ?: return
+        val hostAddress = serviceInfo.host?.hostAddress?.takeUnless { isLoopbackHost(it) }
+            ?: return
 
-        if (hostAddress == "127.0.0.1" || hostAddress == "::1" || hostAddress.contains(
-                "localhost"
-            )
-        ) {
-            return
-        }
-
-        val port = serviceInfo.port
-        val attr = serviceInfo.attributes
-
-        fun attrString(key: String): String? {
-            val bytes = attr[key] ?: return null
-            val s = String(bytes, Charsets.UTF_8).trim()
-            return if (s.isEmpty()) null else s
-        }
-
-        var platform = attrString("platform")
-        var model = attrString("model") ?: attrString("am")
-        var deviceId = attrString("deviceid")
-        val features = attrString("features")
-        val pk = attrString("pk")
-
-        val sampleRate = attrString("sr")?.toIntOrNull()
-            ?: attrString("samplerate")?.toIntOrNull() ?: 48000
-        val channels = attrString("ch")?.toIntOrNull()
-            ?: attrString("channels")?.toIntOrNull() ?: 2
-
-        val extraParts = mutableListOf<String>()
-
-        if (serviceInfo.serviceType.contains("_raop")) {
-            platform = "AirPlay"
-            if (name.contains("@")) {
-                val cleaned = name.substringAfter("@")
-                if (cleaned.isNotEmpty()) {
-                    name = cleaned
-                }
-                if (deviceId == null) deviceId = originalName.substringBefore("@")
-            }
-        } else if (serviceInfo.serviceType.contains("_airplay")) {
-            platform = "AirPlay2"
-        } else if (serviceInfo.serviceType.contains("_googlecast")) {
-            platform = "Google Cast"
-            name = attrString("fn") ?: name
-            model = attrString("md")
-            attrString("st")?.let { extraParts.add(ExtraFields.encode("st", it)) }
-            attrString("ca")?.let { extraParts.add(ExtraFields.encode("ca", it)) }
-            attrString("ve")?.let { extraParts.add(ExtraFields.encode("ve", it)) }
-        } else if (serviceInfo.serviceType.contains("_audiocast")) {
-            platform = "AriaCast"
-        } else if (serviceInfo.serviceType.contains("_snapcast")) {
-            platform = "Snapcast"
-        }
-        // Ensure name is never empty
-        if (name.trim().isEmpty()) {
-            name = originalName
-        }
-
-        if (model != null) extraParts.add(ExtraFields.encode("model", model))
-        if (deviceId != null) extraParts.add(ExtraFields.encode("id", deviceId))
-        if (features != null) extraParts.add(ExtraFields.encode("features", features))
-        if (pk != null) extraParts.add(ExtraFields.encode("pk", pk))
-
-        val server = Server(
-            name = name,
-            host = hostAddress,
-            port = port,
-            version = attrString("version") ?: attrString("srcvers") ?: "1.0",
-            codecs = attrString("codecs")?.split(",") ?: listOf("pcm"),
-            sampleRate = sampleRate,
-            channels = channels,
-            platform = platform,
-            extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
+        val server = MdnsServers.fromResolvedService(
+            serviceInfo.serviceType,
+            serviceName,
+            hostAddress,
+            serviceInfo.port,
+            serviceInfo.attributes
         )
+        val name = server.name
 
         synchronized(discoveredServers) {
             // A different device advertising the same friendly name must not silently
@@ -230,51 +157,40 @@ class DiscoveryManager(private val context: Context) {
             val existingSameName = discoveredServers[name]
             val spoofedName = existingSameName != null && existingSameName.host != hostAddress
             val baseKey = if (spoofedName) "$name@$hostAddress" else name
-            val key = if (platform == "AirPlay" ||
-                platform == "AirPlay2"
-            ) {
-                "$baseKey::$platform"
-            } else {
-                baseKey
-            }
+            val key = MdnsServers.storageKey(baseKey, server.platform)
             val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
 
-            val existing = discoveredServers[key]
-            if (existing != null && existing.platform == platform) {
-                if (platform == "AirPlay" || platform == "AirPlay2") {
-                    val isRaop = serviceInfo.serviceType.contains("_raop")
-                    discoveredServers[key] = if (isRaop) {
-                        candidate.copy(extra = mergeExtras(existing.extra, candidate.extra))
-                    } else {
-                        existing.copy(
-                            extra = mergeExtras(existing.extra, candidate.extra),
-                            version = if (candidate.version !=
-                                "1.0"
-                            ) {
-                                candidate.version
-                            } else {
-                                existing.version
-                            }
-                        )
-                    }
-                } else {
-                    discoveredServers[key] = candidate
-                }
+            val isRaop = serviceInfo.serviceType.contains("_raop")
+            putFound(key, MdnsServers.merged(discoveredServers[key], candidate, isRaop))
+        }
+    }
+
+    /** Stores a DLNA renderer, keeping a same-named renderer on another host separate. */
+    private fun addDlnaRenderer(renderer: Server) {
+        val friendlyName = renderer.name
+        val hostAddress = renderer.host
+        synchronized(discoveredServers) {
+            val existing = discoveredServers[friendlyName]
+            if (existing != null && existing.host != hostAddress) {
+                putFound(
+                    "$friendlyName@$hostAddress",
+                    renderer.copy(name = "$friendlyName ($hostAddress)")
+                )
             } else {
-                discoveredServers[key] = candidate
+                putFound(friendlyName, renderer)
             }
+        }
+    }
+
+    /** Stores [server] under [key], publishes the list and leaves the NONE/IDLE state. */
+    private fun putFound(key: String, server: Server) {
+        synchronized(discoveredServers) {
+            discoveredServers[key] = server
             _servers.value = discoveredServers.values.toList()
             if (_state.value != DiscoveryState.SCANNING) {
                 _state.value = DiscoveryState.FOUND
             }
         }
-    }
-
-    private fun mergeExtras(old: String?, new: String?): String? {
-        if (old == null) return new
-        if (new == null) return old
-        val merged = ExtraFields.parse(old) + ExtraFields.parse(new)
-        return ExtraFields.join(merged.toList())
     }
 
     fun startDiscovery() {
@@ -284,42 +200,17 @@ class DiscoveryManager(private val context: Context) {
             _servers.value = emptyList()
         }
 
-        try {
-            if (multicastLock == null) {
-                multicastLock = wifiManager.createMulticastLock("CreoleCastDiscoveryLock")
-            }
-            multicastLock?.acquire()
-        } catch (e: Exception) {}
+        acquireMulticastLock()
 
         _state.value = DiscoveryState.SCANNING
 
         val prefs = context.getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
         val services = mutableListOf("_audiocast._tcp")
-        val airplayEnabled = prefs.getBoolean("airplay_enabled", false)
-        val airplay2Enabled = prefs.getBoolean("airplay2_enabled", false)
-        if (airplay2Enabled) {
+        if (prefs.getBoolean("airplay2_enabled", false)) {
             services.add("_airplay._tcp")
         }
-        if (airplayEnabled) {
-            raopDiscovery = RaopDiscovery(context)
-            raopDiscovery?.start { device ->
-                val server = Server(
-                    name = device.name,
-                    host = device.host,
-                    port = device.port,
-                    version = device.model ?: "1.0",
-                    codecs = listOf("PCM"),
-                    sampleRate = device.sampleRate,
-                    channels = 2,
-                    platform = "AirPlay",
-                    extra = "et=${device.encryptionType};sr=${device.sampleRate};cn=${device.codec}"
-                )
-                scope.launch {
-                    discoveredServers[device.host] = server
-                    _servers.value = discoveredServers.values.toList()
-                    _state.value = DiscoveryState.FOUND
-                }
-            }
+        if (prefs.getBoolean("airplay_enabled", false)) {
+            startRaopDiscovery()
         }
         if (prefs.getBoolean("google_cast_enabled", false)) {
             services.add("_googlecast._tcp")
@@ -336,24 +227,58 @@ class DiscoveryManager(private val context: Context) {
                         val listener = createNsdListener()
                         synchronized(activeListeners) { activeListeners.add(listener) }
                         nsdManager.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener)
-                    } catch (
-                        e: Exception
-                    ) {
-                        Log.e(TAG, "Discovery failed for $type: ${e.message}")
+                    } catch (e: IllegalArgumentException) {
+                        Log.e(TAG, "Discovery failed for $type", e)
                     }
                 }
             }
 
-            launch { startUdpDiscoveryLoop() }
+            launch { audioCastDiscovery.run() }
             if (prefs.getBoolean("dlna_enabled", false)) {
-                launch { startSsdpDiscoveryLoop() }
+                launch { ssdpDiscovery.run() }
             }
 
             // Keep "SCANNING" state for at least 15 seconds
-            delay(15000)
+            delay(MIN_SCANNING_MS)
             if (_state.value == DiscoveryState.SCANNING) {
                 _state.value =
                     if (discoveredServers.isEmpty()) DiscoveryState.NONE else DiscoveryState.FOUND
+            }
+        }
+    }
+
+    private fun acquireMulticastLock() {
+        try {
+            val lock = multicastLock
+                ?: wifiManager.createMulticastLock("CreoleCastDiscoveryLock")
+                    .also { multicastLock = it }
+            lock.acquire()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Could not acquire multicast lock", e)
+        } catch (e: UnsupportedOperationException) {
+            // Thrown once the process holds the platform's maximum number of Wi-Fi locks.
+            Log.w(TAG, "Could not acquire multicast lock", e)
+        }
+    }
+
+    private fun startRaopDiscovery() {
+        raopDiscovery = RaopDiscovery(context)
+        raopDiscovery?.start { device ->
+            val server = Server(
+                name = device.name,
+                host = device.host,
+                port = device.port,
+                version = device.model ?: "1.0",
+                codecs = listOf("PCM"),
+                sampleRate = device.sampleRate,
+                channels = 2,
+                platform = "AirPlay",
+                extra = "et=${device.encryptionType};sr=${device.sampleRate};cn=${device.codec}"
+            )
+            scope.launch {
+                discoveredServers[device.host] = server
+                _servers.value = discoveredServers.values.toList()
+                _state.value = DiscoveryState.FOUND
             }
         }
     }
@@ -369,14 +294,17 @@ class DiscoveryManager(private val context: Context) {
             activeListeners.forEach { listener ->
                 try {
                     nsdManager.stopServiceDiscovery(listener)
-                } catch (e: Exception) {}
+                } catch (e: IllegalArgumentException) {
+                    // The listener's discovery never started or has already failed.
+                    Log.d(TAG, "NSD listener was not discovering", e)
+                }
             }
             activeListeners.clear()
         }
 
-        try {
-            if (multicastLock?.isHeld == true) multicastLock?.release()
-        } catch (e: Exception) {}
+        // Only ever acquired once per startDiscovery(), which stops first, so a held
+        // lock is released exactly once and cannot be under-locked.
+        if (multicastLock?.isHeld == true) multicastLock?.release()
         resolveQueue.clear()
         activeResolves = 0
     }
@@ -430,253 +358,19 @@ class DiscoveryManager(private val context: Context) {
         return true
     }
 
-    // URLs are built as "http://$host:$port", so only IPv4 literals are accepted (an IPv6
-    // literal would need brackets), matching the previous Patterns.IP_ADDRESS check.
-    private fun isIpv4Literal(host: String): Boolean = InetAddresses.isNumericAddress(host) &&
-        InetAddresses.parseNumericAddress(host) is Inet4Address
-
-    private suspend fun startSsdpDiscoveryLoop() = withContext(Dispatchers.IO) {
-        val ssdpAddress = InetAddress.getByName("239.255.255.250")
-        val searchTargets = listOf(
-            "urn:schemas-upnp-org:device:MediaRenderer:1",
-            "ssdp:all",
-            "upnp:rootdevice"
-        )
-
-        while (isActive) {
-            searchTargets.forEach { st ->
-                try {
-                    val query = "M-SEARCH * HTTP/1.1\r\n" +
-                        "HOST: 239.255.255.250:1900\r\n" +
-                        "MAN: \"ssdp:discover\"\r\n" +
-                        "MX: 3\r\n" +
-                        "ST: $st\r\n\r\n"
-                    DatagramSocket().use { socket ->
-                        socket.soTimeout = 4000
-                        val packet =
-                            DatagramPacket(query.toByteArray(), query.length, ssdpAddress, 1900)
-                        socket.send(packet)
-
-                        val buffer = ByteArray(2048)
-                        val endTime = System.currentTimeMillis() + 4000
-                        while (System.currentTimeMillis() < endTime && isActive) {
-                            val responsePacket = DatagramPacket(buffer, buffer.size)
-                            try {
-                                socket.receive(responsePacket)
-                                val response = String(responsePacket.data, 0, responsePacket.length)
-                                val host = responsePacket.address.hostAddress ?: continue
-                                val location =
-                                    response.split("\r\n").find {
-                                        it.startsWith("LOCATION:", true)
-                                    }?.substring(9)?.trim()
-                                        ?: continue
-                                launch { resolveDlnaDevice(location, host) }
-                            } catch (e: Exception) {
-                                break
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "SSDP error for $st: ${e.message}")
-                }
-                delay(1000)
-            }
-            delay(5000) // Repeat full cycle
-        }
-    }
-
-    private suspend fun resolveDlnaDevice(location: String, hostAddress: String) =
-        withContext(Dispatchers.IO) {
-            try {
-                val locationUri = java.net.URI(location)
-                val scheme = locationUri.scheme?.lowercase()
-                if (scheme != "http" && scheme != "https") return@withContext
-                // The LOCATION header is attacker-controllable by anything on the LAN that can
-                // send an SSDP reply. Requiring it to point back at the address the UDP reply
-                // actually came from stops it being used to make this device fetch an arbitrary
-                // internal URL (SSRF) instead of the description of the device that just replied.
-                if (locationUri.host == null || locationUri.host != hostAddress) return@withContext
-
-                val connection = locationUri.toURL().openConnection() as java.net.HttpURLConnection
-                connection.connectTimeout = 3000
-                connection.readTimeout = 3000
-                val xml = connection.inputStream.use {
-                    readBounded(it, MAX_DEVICE_DESCRIPTION_BYTES)
-                }
-                val friendlyName = xml.substringAfter(
-                    "<friendlyName>",
-                    ""
-                ).substringBefore("</friendlyName>")
-
-                if (friendlyName.isNotEmpty()) {
-                    var avTransportUrl = ""
-                    if (xml.contains("urn:schemas-upnp-org:service:AVTransport:1")) {
-                        val raw = xml.substringAfter(
-                            "urn:schemas-upnp-org:service:AVTransport:1"
-                        ).substringAfter("<controlURL>", "").substringBefore("</controlURL>")
-                        avTransportUrl =
-                            resolveTrustedControlUrl(raw, locationUri, hostAddress) ?: ""
-                    }
-
-                    var renderingControlUrl = ""
-                    if (xml.contains("urn:schemas-upnp-org:service:RenderingControl:1")) {
-                        val raw = xml.substringAfter(
-                            "urn:schemas-upnp-org:service:RenderingControl:1"
-                        ).substringAfter("<controlURL>", "").substringBefore("</controlURL>")
-                        renderingControlUrl =
-                            resolveTrustedControlUrl(raw, locationUri, hostAddress) ?: ""
-                    }
-
-                    val extraParts = mutableListOf<String>()
-                    if (avTransportUrl.isNotEmpty()) {
-                        extraParts.add(
-                            ExtraFields.encode("av_control", avTransportUrl)
-                        )
-                    }
-                    if (renderingControlUrl.isNotEmpty()) {
-                        extraParts.add(
-                            ExtraFields.encode("rc_control", renderingControlUrl)
-                        )
-                    }
-
-                    val server = Server(
-                        name = friendlyName,
-                        host = hostAddress,
-                        port = 0,
-                        version = "1.0",
-                        codecs = listOf("pcm"),
-                        sampleRate = 48000,
-                        channels = 2,
-                        platform = "DLNA",
-                        extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
-                    )
-                    synchronized(discoveredServers) {
-                        val existing = discoveredServers[friendlyName]
-                        if (existing != null && existing.host != hostAddress) {
-                            discoveredServers["$friendlyName@$hostAddress"] =
-                                server.copy(name = "$friendlyName ($hostAddress)")
-                        } else {
-                            discoveredServers[friendlyName] = server
-                        }
-                        _servers.value = discoveredServers.values.toList()
-                        if (_state.value != DiscoveryState.SCANNING) {
-                            _state.value = DiscoveryState.FOUND
-                        }
-                    }
-                }
-            } catch (e: Exception) {}
-        }
-
-    private suspend fun startUdpDiscoveryLoop() = withContext(Dispatchers.IO) {
-        while (isActive) {
-            try {
-                DatagramSocket().use { socket ->
-                    socket.broadcast = true
-                    socket.soTimeout = 3000
-                    val packet =
-                        DatagramPacket(
-                            "DISCOVER_AUDIOCAST".toByteArray(),
-                            18,
-                            InetAddress.getByName("255.255.255.255"),
-                            12888
-                        )
-                    socket.send(packet)
-                    val buffer = ByteArray(1024)
-                    val endTime = System.currentTimeMillis() + 3000
-                    while (System.currentTimeMillis() < endTime && isActive) {
-                        val resp = DatagramPacket(buffer, buffer.size)
-                        try {
-                            socket.receive(resp)
-                        } catch (e: Exception) {
-                            // Timeout (expected once the window elapses) or a socket-level
-                            // error - either way there's nothing more to receive right now.
-                            break
-                        }
-                        try {
-                            val json = JSONObject(String(resp.data, 0, resp.length))
-                            val server = Server(
-                                name = json.optString("server_name"),
-                                host =
-                                    resp.address.hostAddress ?: "",
-                                port = json.optInt("port"),
-                                version = "1.0",
-                                codecs = listOf("pcm"),
-                                sampleRate = 48000,
-                                channels = 2,
-                                platform = "AriaCast"
-                            )
-                            synchronized(discoveredServers) {
-                                discoveredServers[server.name] = server
-                                _servers.value = discoveredServers.values.toList()
-                                if (_state.value != DiscoveryState.SCANNING) {
-                                    _state.value = DiscoveryState.FOUND
-                                }
-                            }
-                        } catch (e: Exception) {
-                            // Malformed reply from one sender - ignore just this packet and
-                            // keep listening for the rest of the window instead of ending
-                            // the whole scan early on a single bad/spoofed reply.
-                        }
-                    }
-                }
-            } catch (e: Exception) {}
-            delay(5000)
-        }
-    }
-
-    /** Reads at most [maxBytes] from [input] as UTF-8 text, so a malicious/misbehaving
-     *  device can't hang discovery by streaming an unbounded response body. */
-    private fun readBounded(input: java.io.InputStream, maxBytes: Int): String {
-        val buffer = java.io.ByteArrayOutputStream()
-        val chunk = ByteArray(4096)
-        while (buffer.size() < maxBytes) {
-            val toRead = minOf(chunk.size, maxBytes - buffer.size())
-            val read = input.read(chunk, 0, toRead)
-            if (read < 0) break
-            buffer.write(chunk, 0, read)
-        }
-        return buffer.toString("UTF-8")
-    }
-
     companion object {
         private const val TAG = "DiscoveryManager"
-        private const val MAX_DEVICE_DESCRIPTION_BYTES = 262_144
         private const val MAX_CONCURRENT_RESOLVES = 3
+        private const val RESOLVE_RETRY_DELAY_MS = 1000L
+        private const val MIN_SCANNING_MS = 15_000L
 
-        /**
-         * Resolves a UPnP <controlURL> value against the (already host-validated) device
-         * description location. A relative path is joined onto that location as usual. An
-         * absolute URL is only accepted if it points back at the same host that answered
-         * the SSDP query - otherwise the device description itself could redirect SOAP
-         * control requests to an arbitrary third-party host/port (confused-deputy SSRF),
-         * so it's dropped instead of trusted.
-         */
-        internal fun resolveTrustedControlUrl(
-            raw: String,
-            locationUri: java.net.URI,
-            expectedHost: String
-        ): String? {
-            if (raw.isEmpty()) return null
-            if (!raw.startsWith("http://", ignoreCase = true) &&
-                !raw.startsWith("https://", ignoreCase = true)
-            ) {
-                val portPart = if (locationUri.port == -1) "" else ":${locationUri.port}"
-                return "${locationUri.scheme}://${locationUri.host}${portPart}${if (raw.startsWith(
-                        "/"
-                    )
-                ) {
-                    ""
-                } else {
-                    "/"
-                }}$raw"
-            }
-            val uri = try {
-                java.net.URI(raw)
-            } catch (e: Exception) {
-                return null
-            }
-            return if (uri.host == expectedHost) raw else null
-        }
+        // URLs are built as "http://$host:$port", so only IPv4 literals are accepted (an IPv6
+        // literal would need brackets), matching the previous Patterns.IP_ADDRESS check.
+        private fun isIpv4Literal(host: String): Boolean = InetAddresses.isNumericAddress(host) &&
+            InetAddresses.parseNumericAddress(host) is Inet4Address
+
+        private fun isLoopbackHost(hostAddress: String): Boolean =
+            hostAddress == "127.0.0.1" || hostAddress == "::1" || hostAddress.contains("localhost")
 
         /**
          * Stable identity of a discovered server: the tuple that actually distinguishes

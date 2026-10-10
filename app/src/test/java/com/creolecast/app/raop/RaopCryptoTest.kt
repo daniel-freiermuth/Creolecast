@@ -21,7 +21,7 @@ class RaopCryptoTest {
         val crypto = RaopCrypto()
         crypto.initAes(aesKey, iv)
 
-        val data = ByteArray(16) { 0x00.toByte() }
+        val data = ByteArray(16)
         val encrypted1 = crypto.encryptAudio(data)
         val encrypted2 = crypto.encryptAudio(data)
 

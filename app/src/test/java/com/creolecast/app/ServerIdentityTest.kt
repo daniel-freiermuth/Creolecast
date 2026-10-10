@@ -11,24 +11,17 @@ import org.junit.Test
  */
 class ServerIdentityTest {
 
-    private fun server(
-        name: String,
-        host: String,
-        port: Int = 0,
-        platform: String? = null,
-        extra: String? = null,
-        version: String = "1.0"
-    ) = Server(
-        name = name,
-        host = host,
-        port = port,
-        version = version,
-        codecs = listOf("pcm"),
-        sampleRate = 48000,
-        channels = 2,
-        platform = platform,
-        extra = extra
-    )
+    private fun server(name: String, host: String, port: Int = 0, platform: String? = null) =
+        Server(
+            name = name,
+            host = host,
+            port = port,
+            version = "1.0",
+            codecs = listOf("pcm"),
+            sampleRate = 48000,
+            channels = 2,
+            platform = platform
+        )
 
     @Test
     fun `DLNA renderers sharing one host stay distinct`() {

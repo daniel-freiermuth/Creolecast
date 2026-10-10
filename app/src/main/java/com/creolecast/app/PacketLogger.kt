@@ -19,6 +19,9 @@ data class PacketLog(
 )
 
 object PacketLogger {
+    /** Oldest entries beyond this many are dropped. */
+    private const val MAX_LOG_ENTRIES = 500
+
     private val _logs = mutableListOf<PacketLog>()
     val logs: List<PacketLog> get() = synchronized(_logs) { _logs.toList() }
 
@@ -45,11 +48,7 @@ object PacketLogger {
 
         synchronized(_logs) {
             val lastLog = _logs.firstOrNull()
-            if (lastLog != null &&
-                lastLog.direction == direction &&
-                lastLog.type == type &&
-                lastLog.message == message
-            ) {
+            if (lastLog != null && lastLog.isRepeatOf(direction, type, message)) {
                 lastLog.count++
                 lastLog.timestamp = timestamp
                 // We still emit it to let the UI know something happened,
@@ -58,11 +57,17 @@ object PacketLogger {
                 // since it maintains its own list anyway.
             } else {
                 _logs.add(0, entry)
-                if (_logs.size > 500) _logs.removeAt(_logs.size - 1)
+                if (_logs.size > MAX_LOG_ENTRIES) _logs.removeAt(_logs.size - 1)
             }
         }
         _logFlow.tryEmit(entry)
     }
+
+    private fun PacketLog.isRepeatOf(
+        direction: PacketDirection,
+        type: PacketType,
+        message: String
+    ): Boolean = this.direction == direction && this.type == type && this.message == message
 
     fun clear() {
         synchronized(_logs) {

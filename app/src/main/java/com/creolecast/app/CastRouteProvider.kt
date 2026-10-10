@@ -4,10 +4,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.media.MediaRoute2Info
 import android.media.MediaRoute2ProviderService
 import android.media.RouteDiscoveryPreference
-import android.media.RoutingSessionInfo
 import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +28,6 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     companion object {
         private const val TAG = "CastRouteProvider"
         private const val SESSION_ID_PREFIX = "creolecast-session-"
-        private const val VOLUME_MAX = 30
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
@@ -39,7 +36,7 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     private var discoveryManager: DiscoveryManager? = null
     private var discoveryJob: Job? = null
     private var activeSessionId: String? = null
-    private var currentVolume: Int = VOLUME_MAX
+    private var currentVolume: Int = CastRoutes.VOLUME_MAX
 
     // Cache the last published server list so we can build route IDs consistently
     private var lastServers: List<Server> = emptyList()
@@ -65,7 +62,15 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         // available immediately — no fresh mDNS scan needed on every service restart.
         discoveryManager = (application as CreoleCastApp).discoveryManager
         discoveryManager?.startDiscovery()
-        startObservingRoutes()
+        // Observe discovered servers and republish them as routes.
+        discoveryJob?.cancel()
+        discoveryJob = scope.launch {
+            val dm = discoveryManager ?: return@launch
+            dm.servers.collectLatest { servers ->
+                lastServers = servers
+                notifyRoutes(CastRoutes.routesFor(servers, currentVolume))
+            }
+        }
         Intent(this, AudioCastService::class.java).also {
             bindService(it, connection, Context.BIND_AUTO_CREATE)
         }
@@ -85,47 +90,8 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     override fun onDiscoveryPreferenceChanged(preference: RouteDiscoveryPreference) {
         Log.d(TAG, "Discovery preference changed: features=${preference.preferredFeatures}")
         // We always keep discovery running; just republish what we have.
-        publishRoutes(lastServers)
+        notifyRoutes(CastRoutes.routesFor(lastServers, currentVolume))
     }
-
-    private fun startObservingRoutes() {
-        discoveryJob?.cancel()
-        discoveryJob = scope.launch {
-            val dm = discoveryManager ?: return@launch
-            dm.servers.collectLatest { servers ->
-                lastServers = servers
-                publishRoutes(servers)
-            }
-        }
-    }
-
-    private fun publishRoutes(servers: List<Server>) {
-        // notifyRoutes() throws if two routes share an id, which would take the whole
-        // process down from a discovery callback. Distinct discovered entries can still
-        // collapse onto one id (same device answering on two discovery protocols), so
-        // enforce the platform's uniqueness requirement here rather than trusting it.
-        val routes = servers.map { server -> buildRouteInfo(server) }.distinctBy { it.id }
-        Log.d(TAG, "Publishing ${routes.size} routes: ${routes.map { it.name }}")
-        notifyRoutes(routes)
-    }
-
-    private fun buildRouteInfo(server: Server): MediaRoute2Info {
-        val builder = MediaRoute2Info.Builder(routeIdFor(server), server.name)
-            .addFeature(MediaRoute2Info.FEATURE_LIVE_AUDIO)
-            .addFeature(MediaRoute2Info.FEATURE_REMOTE_PLAYBACK)
-            .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
-            .setVolumeMax(VOLUME_MAX)
-            .setVolume(currentVolume)
-            .setDescription(server.platform ?: "AirPlay")
-
-        builder.setType(MediaRoute2Info.TYPE_REMOTE_SPEAKER)
-        return builder.build()
-    }
-
-    // The name is part of the id because host+port+platform alone is not unique:
-    // every DLNA entry carries port 0, so two renderers on one IP would collide.
-    private fun routeIdFor(server: Server): String =
-        "${server.host}:${server.port}:${server.platform ?: "unknown"}:${server.name}"
 
     // ── Volume ──────────────────────────────────────────────────────────
 
@@ -140,33 +106,27 @@ class CastRouteProvider : MediaRoute2ProviderService() {
     }
 
     private fun applyVolume(volume: Int) {
-        currentVolume = volume.coerceIn(0, VOLUME_MAX)
-        val dB = (currentVolume - VOLUME_MAX).toDouble()
-        audioCastService?.sendVolumeDb(dB)
-        updateSessionVolume()
+        currentVolume = volume.coerceIn(0, CastRoutes.VOLUME_MAX)
+        val dB = (currentVolume - CastRoutes.VOLUME_MAX).toDouble()
+        val svc = audioCastService
+        svc?.sendVolumeDb(dB)
+        // Keep the active session's volume in step with the route.
+        val sessionId = activeSessionId
+        val dest = svc?.activeDestinations?.value?.firstOrNull()
+        if (sessionId != null && dest != null) {
+            notifySessionUpdated(
+                CastRoutes.sessionInfo(
+                    sessionId,
+                    packageName,
+                    dest.name,
+                    CastRoutes.routeId(dest),
+                    currentVolume
+                )
+            )
+        }
         // Also republish routes with updated volume
-        publishRoutes(lastServers)
+        notifyRoutes(CastRoutes.routesFor(lastServers, currentVolume))
     }
-
-    private fun updateSessionVolume() {
-        val sessionId = activeSessionId ?: return
-        val svc = audioCastService ?: return
-        val dest = svc.activeDestinations.value.firstOrNull() ?: return
-
-        val updated = RoutingSessionInfo.Builder(sessionId, packageName)
-            .setName(dest.name)
-            .addSelectedRoute(routeIdFor(dest))
-            .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
-            .setVolumeMax(VOLUME_MAX)
-            .setVolume(currentVolume)
-            .build()
-        notifySessionUpdated(updated)
-    }
-
-    /** Must stay byte-identical to the [Server] overload above — the id produced here
-     *  is handed to addSelectedRoute() and has to match a published route. */
-    private fun routeIdFor(dest: CastDestination): String =
-        "${dest.host}:${dest.port}:${dest.platform ?: "unknown"}:${dest.name}"
 
     // ── Session lifecycle (system-initiated via output picker) ───────────
 
@@ -195,13 +155,8 @@ class CastRouteProvider : MediaRoute2ProviderService() {
         }
 
         val sessionId = SESSION_ID_PREFIX + dest.host
-        val sessionInfo = RoutingSessionInfo.Builder(sessionId, packageName)
-            .setName(dest.name)
-            .addSelectedRoute(routeId)
-            .setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
-            .setVolumeMax(VOLUME_MAX)
-            .setVolume(currentVolume)
-            .build()
+        val sessionInfo =
+            CastRoutes.sessionInfo(sessionId, packageName, dest.name, routeId, currentVolume)
 
         activeSessionId = sessionId
         notifySessionCreated(requestId, sessionInfo)
