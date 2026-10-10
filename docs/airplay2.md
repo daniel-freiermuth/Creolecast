@@ -23,7 +23,13 @@ Deliberate divergences for an audio-only sender: we omit `isScreenMirroringSessi
 
 Verified against doubletake's own test receiver:
 
-- HomeKit pair-setup, transient (HKP 4) and PIN (HKP 5), full M1–M6
+- HomeKit PIN pair-setup (HKP 5): full M1–M6 followed by pair-verify
+- Transient pair-setup (HKP 4) **diverges from the reference**, and is verified against
+  shairport-sync rather than doubletake: SRP password `3939`, a 1-byte `0x10` flags TLV, and
+  it ends at M4, keying the control channel from the SRP session key. This matches the HAP
+  encoding and owntone's client (`pair_ap`). doubletake sends an empty password and a 4-byte
+  flag, then runs M5/M6 and pair-verify; its test receiver accepts only that variant, so it
+  now rejects our transient setup.
 - Persistent Ed25519 pairing identity per receiver DeviceID; reconnect needs only pair-verify
 - HAP pair-verify with an enforced M2 server signature
 - ChaCha20-Poly1305 framed RTSP control channel
@@ -69,6 +75,12 @@ reference side.
   harness limitation, not a client bug: its session state machine only reaches `ready` after a
   *video* SETUP, which an audio-only sender never sends. Volume and keepalive are therefore
   unproven.
+- **shairport-sync (AirPlay 2 build, 5.0.x)**: transient pair-setup, encrypted control
+  channel and FairPlay SAP pass. The session then stops at stream SETUP: shairport-sync only
+  accepts PTP timing and expects the *sender* to be the PTP master that nqptp follows. Its
+  `timingPeerInfo` has no `ClockID`, and we run no PTP master, so `connect()` fails with
+  "PTP SETUP response omitted timingPeerInfo.ClockID". NTP streams are rejected outright
+  (`rtsp.c`: "Shairport Sync can not handle NTP streams").
 
 ## Backlog
 
@@ -111,3 +123,21 @@ We connect the event channel and parse volume and transport commands from it, bu
 enable HAP framing on that socket after pair-verify. Receivers that encrypt it will just look
 like garbage and get dropped — harmless today, but it means remote volume and play/pause from
 the speaker may silently not work. This is the most likely of these to actually bite a user.
+
+### PTP media clock (receiver timeline)
+`mirror.go` — `mediaClock`: `configureFromSetup`, `reanchor`, `configureFromLocalClock`.
+
+Not ported, and it's the main timing gap. The reference maps local monotonic time onto the
+receiver's PTP timeline. It anchors on the SETUP response's `X-Apple-RequestReceivedTimestamp`
+plus `X-Apple-ProcessingTime` (the receiver's boot-relative clock), re-anchors from every
+`/feedback` response without ever moving backwards, and falls back to the local boot clock when
+those headers are missing. Our `sendSyncPacket` instead stamps `System.currentTimeMillis()`
+converted to the NTP epoch. That's the wrong timescale for a PTP timeline, so anchors land far
+from the receiver's "now".
+
+### PTP master
+Not in the reference either: it always needs the receiver's `ClockID`. Receivers that follow the
+sender's clock (shairport-sync + nqptp) need the app to run as an IEEE 1588 master
+(Announce/Sync/Follow_Up on UDP 319/320). It would then advertise its own `ClockID` in
+`timingPeerInfo` and stamp sync packets on that timeline. owntone does this with its own PTP
+daemon.

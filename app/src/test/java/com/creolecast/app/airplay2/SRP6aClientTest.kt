@@ -21,13 +21,10 @@ class SRP6aClientTest {
 
     @Test
     fun `transient M1 carries the transient flag`() {
-        // Without flags=0x00000010 LE the receiver runs the exchange as full
-        // PIN pairing and rejects the empty transient password.
-        val parsed = TlvUtil.parse(SRP6aClient("").buildM1(transient = true))
-        assertArrayEquals(
-            byteArrayOf(0x10, 0x00, 0x00, 0x00),
-            parsed[TlvUtil.TLV_FLAGS]?.firstOrNull()
-        )
+        // The flag must be the single byte 0x10: receivers such as shairport-sync
+        // reject any other length and fall back to full PIN pairing.
+        val parsed = TlvUtil.parse(SRP6aClient("3939").buildM1(transient = true))
+        assertArrayEquals(byteArrayOf(0x10), parsed[TlvUtil.TLV_FLAGS]?.firstOrNull())
     }
 
     @Test

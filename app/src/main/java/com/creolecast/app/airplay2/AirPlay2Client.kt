@@ -53,6 +53,9 @@ class AirPlay2Client(
         private const val HKP_TRANSIENT = 4
         private const val HKP_SCREEN_CAPTURE = 5
 
+        /** Fixed SRP password for HomeKit transient pair-setup. */
+        private const val TRANSIENT_PIN = "3939"
+
         private const val USER_AGENT = "AirPlay/935.7.1"
         private const val SOURCE_VERSION_NTP = "280.33"
         private const val SOURCE_VERSION_PTP = "980.71.1"
@@ -212,18 +215,16 @@ class AirPlay2Client(
             return false
         }
 
+        // Transient pair-setup ends at M4 with the channel already keyed from the
+        // SRP session key; pair-verify only follows a persistent PIN pairing.
+        if (pairType == HKP_TRANSIENT) return true
+
         if (!doPairVerify()) {
             Log.e(TAG, "pair-verify failed after pair-setup")
             return false
         }
 
-        // Transient pairings are ephemeral: the receiver forgets them when the
-        // session ends, so persisting them would only guarantee a failed
-        // pair-verify next time. The reference saves only PIN/password
-        // pairings (airplay2.go `_pair`).
-        if (pairType != HKP_TRANSIENT) {
-            credentialStore.save(receiverDeviceId, fresh)
-        }
+        credentialStore.save(receiverDeviceId, fresh)
         return true
     }
 
@@ -290,16 +291,20 @@ class AirPlay2Client(
     }
 
     /**
-     * Transient pairing first (no PIN), PIN pairing when we have one. Both run
-     * the full SRP M1..M6 exchange — the reference never skips M5/M6
-     * (pairing.go `completeSRPExchange`), because M5 is what registers our
-     * long-term key that pair-verify later signs with.
+     * Transient pairing first (no PIN), PIN pairing when we have one. Transient
+     * pair-setup ends after M4: the SRP session key keys the control channel and
+     * no long-term identity is exchanged (HAP; shairport-sync rtsp.c
+     * handle_pair_setup). PIN pairing runs the full M1..M6 exchange, because M5
+     * is what registers our long-term key that pair-verify later signs with.
      */
     private fun doPairSetup(pin: String?): Boolean {
         val attempts = if (pin != null) {
             listOf(HKP_SCREEN_CAPTURE to pin, HKP_LEGACY to pin)
         } else {
-            listOf(HKP_TRANSIENT to "")
+            // HomeKit transient pairing still runs SRP, with the fixed password
+            // "3939" (shairport-sync, pyatv and owntone all use it); an empty
+            // password makes the receiver's M4 proof fail to verify.
+            listOf(HKP_TRANSIENT to TRANSIENT_PIN)
         }
 
         for ((type, srpPin) in attempts) {
@@ -325,6 +330,12 @@ class AirPlay2Client(
             if (resp2.code != 200) { Log.e(TAG, "pair-setup M3 failed: ${resp2.code}"); continue }
             if (!srp.verifyM4(resp2.body ?: continue)) {
                 Log.e(TAG, "pair-setup M4 verification failed"); continue
+            }
+
+            if (transient) {
+                enableControlEncryption(srp.sharedKeyBytes ?: continue)
+                Log.d(TAG, "Pair-setup complete (transient), control channel encrypted")
+                return true
             }
 
             val creds = credentials ?: return false
@@ -434,19 +445,23 @@ class AirPlay2Client(
             }
         }
 
-        // From here the whole RTSP channel is HAP framed (pairing.go:766-791).
+        enableControlEncryption(shared)
+        Log.d(TAG, "Pair-verify complete, control channel encrypted")
+        return true
+    }
+
+    /** From here the whole RTSP channel is HAP framed (pairing.go:766-791). */
+    private fun enableControlEncryption(sharedSecret: ByteArray) {
         val controlSalt = "Control-Salt".toByteArray(Charsets.UTF_8)
         hapWriteKey = AirPlay2Crypto.hkdfSha512(
-            controlSalt, shared, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+            controlSalt, sharedSecret, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32
         )
         hapReadKey = AirPlay2Crypto.hkdfSha512(
-            controlSalt, shared, "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+            controlSalt, sharedSecret, "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8), 32
         )
         hapWriteNonce = 0
         hapReadNonce = 0
         channelEncrypted = true
-        Log.d(TAG, "Pair-verify complete, control channel encrypted")
-        return true
     }
 
     // ----------------------------------------------------------- capabilities
