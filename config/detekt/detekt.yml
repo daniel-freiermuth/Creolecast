@@ -1,0 +1,28 @@
+# detekt runs with buildUponDefaultConfig + allRules (see app/build.gradle.kts):
+# every rule, including opt-in ones, is active. This file lists only deliberate
+# deviations from that, each with its reason.
+
+comments:
+  # Requires a per-file license header template; the project is licensed via
+  # LICENSE.md instead.
+  AbsentOrWrongFileLicense:
+    active: false
+
+naming:
+  # Tests use descriptive backticked names (`fun \`does X when Y\`()`).
+  FunctionNameMaxLength:
+    excludes: ['**/test/**', '**/androidTest/**']
+
+style:
+  # Formatting is ktlint's job (Spotless, .editorconfig); these would report the
+  # same issues twice.
+  MaxLineLength:
+    active: false
+  NewLineAtEndOfFile:
+    active: false
+  NoTabs:
+    active: false
+  TrailingWhitespace:
+    active: false
+  WildcardImport:
+    active: false
