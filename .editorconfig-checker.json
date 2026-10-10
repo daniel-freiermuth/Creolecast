@@ -1,0 +1,14 @@
+{
+  "Exclude": [
+    "^\\.idea/",
+    "^app/(detekt|lint)-baseline.*\\.xml$",
+    "^app/release/",
+    "^fastlane/metadata/",
+    "^LICENSE\\.md$",
+    "^\\.safehaven$"
+  ],
+  "Disable": {
+    "IndentSize": true,
+    "MaxLineLength": true
+  }
+}

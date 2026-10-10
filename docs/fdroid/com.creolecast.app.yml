@@ -31,7 +31,8 @@ Builds:
     commit: v1.0.0
     subdir: app
     gradle:
-      - yes
+      # fdroidserver flavor name, not a boolean
+      - yes # yamllint disable-line rule:truthy
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags ^v[0-9.]+$

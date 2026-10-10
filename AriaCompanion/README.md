@@ -14,7 +14,7 @@ AriaCast level.
 AriaCompanion solves this by moving audio capture off the phone entirely —
 and by not routing the audio back through the phone at all:
 
-```
+```text
 Phone Bluetooth → ESP32 (BT sink) → I2S → ESP32 (WiFi sender) → WebSocket → AriaCast Receiver
 ```
 
@@ -40,7 +40,7 @@ across two chips avoids the radio contention a single ESP32 hits trying to do
 both at once.
 
 | Role | Folder | Board | Notes |
-|------|--------|-------|-------|
+| --- | --- | --- | --- |
 | **BT sink** | `AriaCompanionBtSink/` | Any classic ESP32 (WROOM/WROVER) | Must support **Classic Bluetooth (BR/EDR)** — S3/C3/C6 do **not** work here, they dropped it in favor of BLE-only |
 | **WiFi sender** | `AriaCompanionWifiBridge/` | Any ESP32 — classic, S3, C3, C6 | Only needs WiFi, no Bluetooth, so newer chips are fine (tested on an ESP32-S3-DevKitC-1) |
 
@@ -56,7 +56,7 @@ Troubleshooting).
 Two independent [PlatformIO](https://platformio.org/) projects, one per board:
 
 | Folder | Role |
-|--------|------|
+| --- | --- |
 | `AriaCompanionBtSink/` | Always the Bluetooth A2DP sink ("Scheda A"). Resamples whatever the source negotiates (typically 44100 or 48000 Hz) to a fixed 48 kHz stereo 16-bit and drives the I2S bus as **master**. Never touches WiFi. |
 | `AriaCompanionWifiBridge/` | Always the WiFi sender ("Scheda B"). Reads I2S as **slave** at a fixed 48 kHz (no resampling needed — the BT sink already guarantees the rate), packetizes it into 20 ms / 3840-byte frames, and streams them to AriaCast as a **Sender** over WebSocket. Exposes a small REST API (port 8081) the app uses to tell it which AriaCast instance to stream to. Never touches Bluetooth. |
 
@@ -82,10 +82,10 @@ each source file for the exact GPIOs on your specific board/variant.
 
 | Signal | BT sink (`main.cpp`) | WiFi sender (`i2s_input.h`) |
 | ------ | --------------------- | ---------------------------- |
-| I2S BCK  | GPIO 26 | GPIO 4 |
-| I2S WS   | GPIO 25 | GPIO 5 |
+| I2S BCK | GPIO 26 | GPIO 4 |
+| I2S WS | GPIO 25 | GPIO 5 |
 | I2S DATA | GPIO 22 | GPIO 6 (RX input) |
-| GND      | common  | common (**mandatory** reference) |
+| GND | common | common (**mandatory** reference) |
 
 The BT sink board is the I2S **master** (`is_master = true`) — clock and
 word-select are generated there; the WiFi sender is the **slave**
@@ -166,9 +166,10 @@ job (it already speaks AriaCast's own discovery protocols). This API just
 receives the host/port of the AriaCast Receiver the app (or you) picked;
 the board then connects there itself.
 
-```
+```http
 GET http://<board-ip>:8081/api/status
 ```
+
 ```json
 {
   "wifi": { "connected": true, "ip": "192.168.1.42", "ssid": "HomeNetwork" },
@@ -177,28 +178,31 @@ GET http://<board-ip>:8081/api/status
 }
 ```
 
-```
+```http
 POST http://<board-ip>:8081/api/receiver
 Content-Type: application/json
 
 {"host": "192.168.1.100", "port": 12889}
 ```
+
 Saves the receiver to NVS (persists across reboots) and immediately starts a
 WebSocket connection to `/audio` on that host/port. AriaCast calls this
 automatically with the AriaCast Receiver's IP when you pick it from the
 app's destination list — you never need to call it by hand.
 
-```
+```http
 DELETE http://<board-ip>:8081/api/receiver
 ```
+
 Stops streaming and forgets the selected receiver.
 
-```
+```http
 POST http://<board-ip>:8081/api/metadata
 Content-Type: application/json
 
 {"data": {"title": "...", "artist": "...", "album": "...", "artworkUrl": "...", "durationMs": 123456, "positionMs": 4200, "isPlaying": true}}
 ```
+
 The board doesn't parse this at all — the app sends the exact same JSON body
 it would otherwise POST directly to a receiver's own `/metadata` endpoint, so
 the board just caches it and forwards it verbatim to
@@ -209,9 +213,10 @@ from captured audio). The cached copy is also re-sent automatically the
 moment a receiver is set via `POST /api/receiver`, so the receiver gets Now
 Playing info immediately instead of waiting for the next track change.
 
-```
+```http
 POST http://<board-ip>:8081/api/wifi/reset
 ```
+
 Clears the saved WiFi credentials and reboots into the `AriaCast-Setup`
 configuration AP (useful if you change routers).
 
@@ -226,7 +231,7 @@ AriaCompanion streams over AriaCast's native protocol (WebSocket, `/audio`,
 JSON `{"status":"READY"}` handshake), not a bespoke raw-TCP format:
 
 | Parameter | Value |
-|-----------|-------|
+| ----------- | ------- |
 | Sample rate | 48 000 Hz |
 | Channels | 2 (stereo) |
 | Bit depth | 16-bit signed, little-endian |
@@ -241,12 +246,14 @@ internally everywhere else — no resampling needed on either end.
 
 ## Troubleshooting
 
-**Loud static/noise instead of audio**
+### Loud static/noise instead of audio
+
 - Almost always an I2S wiring issue: double-check BCK and WS aren't swapped
   between the two boards, and that GND is actually common — a missing ground
   reference produces exactly this symptom.
 
-**Audio works but stutters intermittently**
+### Audio works but stutters intermittently
+
 - Make sure `WiFi.setSleep(false)` is in effect on the WiFi sender board (it
   is by default) — WiFi power-save parks the radio periodically and is a
   classic cause of streaming stutter.
@@ -255,21 +262,25 @@ internally everywhere else — no resampling needed on either end.
 - Confirm the board isn't overheating/resetting (see below) — a reset drops
   the WebSocket connection and sounds like a stutter followed by silence.
 
-**WiFi sender board runs hot and resets**
+### WiFi sender board runs hot and resets
+
 - Make sure `loop()` has a `delay()` at the end on both boards — a loop that
   never yields can spin the CPU at 100%, starve the watchdog, and reset.
 
-**"GPIO number error" on boot (gpio_func_sel / gpio_input_enable)**
+### "GPIO number error" on boot (gpio_func_sel / gpio_input_enable)
+
 - A pin passed to the I2S config is invalid for that board/config — check the
   pin constants match your exact module (PSRAM type/pin count vary between
   ESP32-S3 variants especially).
 
-**AriaCast can't find the device (mDNS fails)**
+### AriaCast can't find the device (mDNS fails)
+
 - Some routers block mDNS between clients; enter the IP address manually
   instead (check your router's DHCP client list, or read it off the WiFi
   sender board's Serial Monitor output after connecting).
 
-**Powering both boards from one supply**
+### Powering both boards from one supply
+
 - Bridge **5V-to-VIN** (one board's 5V pin to the other's VIN pin), not
   **3.3V-to-3.3V** — VIN is the unregulated input to each board's own
   regulator; feeding 3.3V into it directly can leave the far board without
