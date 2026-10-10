@@ -58,6 +58,7 @@ import org.json.JSONObject
 import com.creolecast.app.airplay2.AirPlay2Client
 import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
+import com.creolecast.app.raop.AlacEncoder
 import com.creolecast.app.raop.AudioResampler
 import com.creolecast.app.raop.RaopCrypto
 import java.io.ByteArrayOutputStream
@@ -1303,7 +1304,7 @@ class AudioCastService : Service() {
                         val chunk = accBytes.copyOfRange(consumed, consumed + FRAME_BYTES)
                         consumed += FRAME_BYTES
 
-                        var alacFrame = alacEncodeUncompressedRaop(chunk)
+                        var alacFrame = AlacEncoder.encodeUncompressed(chunk, hasSize = false)
                         raopCrypto?.let { alacFrame = it.encryptAudio(alacFrame) }
 
                         val rtpHeader = ByteBuffer.allocate(12).apply {
@@ -2239,46 +2240,4 @@ class AudioCastService : Service() {
         internal fun captureSampleRate(platform: String?): Int =
             if (platform == "AirPlay" || platform == "AirPlay2") 44100 else SAMPLE_RATE
     }
-    /** Encode little-endian PCM into an ALAC uncompressed frame.
-     *  Writes the 23-bit ALAC header, byte-swaps each stereo sample pair
-     *  to big-endian, and appends the 3-bit end tag. */
-    private fun alacEncodeUncompressedRaop(pcm: ByteArray): ByteArray {
-        val out = ByteArray(3 + pcm.size + 1) // header + samples + trailer padding
-        var p = 0
-        var bpos = 0
-
-        fun writeBits(v: Int, blen: Int) {
-            val lb = 8 - bpos
-            val rb = lb - blen
-            if (rb >= 0) {
-                val bd = (v shl rb) and 0xFF
-                out[p] = if (bpos == 0) bd.toByte() else (out[p].toInt() or bd).toByte()
-                if (rb == 0) { p++; bpos = 0 } else bpos += blen
-            } else {
-                out[p] = (out[p].toInt() or ((v ushr (-rb)) and 0xFF)).toByte()
-                p++
-                out[p] = ((v shl (8 + rb)) and 0xFF).toByte()
-                bpos = -rb
-            }
-        }
-
-        // ALAC uncompressed frame header: 3 bits tag(1) + 4 bits unused + 8 bits unused
-        //                                 + 4 bits unused + 1 bit "has size" + 2 bits unused + 1 bit "not compressed"
-        writeBits(1, 3); writeBits(0, 4); writeBits(0, 8)
-        writeBits(0, 4); writeBits(0, 1); writeBits(0, 2); writeBits(1, 1)
-
-        // Byte-swap little-endian stereo samples to big-endian
-        var i = 0
-        while (i < pcm.size) {
-            writeBits(pcm[i + 1].toInt() and 0xFF, 8)  // L high
-            writeBits(pcm[i + 0].toInt() and 0xFF, 8)  // L low
-            writeBits(pcm[i + 3].toInt() and 0xFF, 8)  // R high
-            writeBits(pcm[i + 2].toInt() and 0xFF, 8)  // R low
-            i += 4
-        }
-        // End tag
-        writeBits(7, 3)
-        return out
-    }
-
 }
