@@ -1,28 +1,27 @@
 package com.creolecast.app.raop
 
+import android.util.Log
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.net.SocketException
 
 object RaopUtils {
-    fun getLocalIpAddress(): java.net.InetAddress? {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (iface.isLoopback || !iface.isUp) continue
+    private const val TAG = "RaopUtils"
 
-                val name = iface.name.lowercase()
-                if (name.contains("tun") || name.contains("ppp") || name.contains("tap")) continue
+    /** First IPv4 address of an up, non-loopback, non-VPN interface, or null if none. */
+    fun getLocalIpAddress(): java.net.InetAddress? = try {
+        NetworkInterface.getNetworkInterfaces()?.asSequence().orEmpty()
+            .filter(::isLanInterface)
+            .flatMap { it.inetAddresses.asSequence() }
+            .firstOrNull { it is Inet4Address }
+    } catch (e: SocketException) {
+        Log.w(TAG, "Could not enumerate network interfaces", e)
+        null
+    }
 
-                val addresses = iface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val addr = addresses.nextElement()
-                    if (addr is Inet4Address) {
-                        return addr
-                    }
-                }
-            }
-        } catch (e: Exception) {}
-        return null
+    private fun isLanInterface(iface: NetworkInterface): Boolean {
+        if (iface.isLoopback || !iface.isUp) return false
+        val name = iface.name.lowercase()
+        return !(name.contains("tun") || name.contains("ppp") || name.contains("tap"))
     }
 }

@@ -81,7 +81,8 @@ class AudioResampler(
                         sum += history[c][i] * filter[phase + i * l]
                     }
                     val outSample = sum.toInt().coerceIn(-32768, 32767).toShort()
-                    output[outIdx++] = (outSample.toInt() and 0xFF).toByte()
+                    // Little-endian: toByte() keeps the low 8 bits, then the high byte.
+                    output[outIdx++] = outSample.toByte()
                     output[outIdx++] = (outSample.toInt() shr 8).toByte()
                 }
                 phase += m

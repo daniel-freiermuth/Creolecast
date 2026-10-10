@@ -2,7 +2,6 @@ package com.creolecast.app.raop
 
 import java.math.BigInteger
 import java.security.KeyFactory
-import java.security.Security
 import java.security.spec.RSAPublicKeySpec
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -11,9 +10,9 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 class RaopCrypto {
     companion object {
-        init {
-            Security.addProvider(BouncyCastleProvider())
-        }
+        // The bundled (full) Bouncy Castle provider, passed by instance: looking "BC" up
+        // by name would return Android's stripped platform provider instead.
+        private val BOUNCY_CASTLE = BouncyCastleProvider()
 
         // Apple AirPlay RSA Public Key Modulus (2048-bit) as used in airplay2-rs.
         // Kept as the reference's 15-bytes-per-row table so it can be diffed against it.
@@ -45,10 +44,7 @@ class RaopCrypto {
             val publicKey = factory.generatePublic(spec)
 
             // RAOP uses RSA-OAEP with SHA-1
-            val cipher = Cipher.getInstance(
-                "RSA/None/OAEPWithSHA1AndMGF1Padding",
-                Security.getProvider("BC")
-            )
+            val cipher = Cipher.getInstance("RSA/None/OAEPWithSHA1AndMGF1Padding", BOUNCY_CASTLE)
             cipher.init(Cipher.ENCRYPT_MODE, publicKey)
             return cipher.doFinal(aesKey)
         }
@@ -67,7 +63,7 @@ class RaopCrypto {
      * In RAOP, the IV is reset for every packet.
      */
     fun encryptAudio(data: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/CBC/NoPadding", Security.getProvider("BC"))
+        val cipher = Cipher.getInstance("AES/CBC/NoPadding", BOUNCY_CASTLE)
         cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
 
         return if (data.size % 16 == 0) {
