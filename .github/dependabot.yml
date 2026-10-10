@@ -1,0 +1,25 @@
+version: 2
+# Hold back releases younger than a week: compromised packages are usually caught
+# and yanked within days.
+updates:
+  # Gradle plugins and libraries (libs.versions.toml and app/build.gradle.kts).
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      gradle-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Workflow actions are pinned by SHA; Dependabot bumps the SHA and its comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ['*']
