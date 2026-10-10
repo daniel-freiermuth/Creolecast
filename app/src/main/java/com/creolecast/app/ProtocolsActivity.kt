@@ -9,7 +9,8 @@ import com.google.android.material.materialswitch.MaterialSwitch
 class ProtocolsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val sharedPreferences = getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
+        val sharedPreferences =
+            getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
 
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_protocols)

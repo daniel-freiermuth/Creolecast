@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,7 +23,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
 
 class MediaNotificationListener : NotificationListenerService() {
 
@@ -42,7 +42,7 @@ class MediaNotificationListener : NotificationListenerService() {
             audioCastService = boundService
             isBound = true
             Log.d(TAG, "Bound to AudioCastService")
-            
+
             handleMediaSessionsChanged()
             startCommandCollection(boundService)
             startStateObservation(boundService)
@@ -64,7 +64,6 @@ class MediaNotificationListener : NotificationListenerService() {
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
         }
     }
-
 
     private fun startStateObservation(service: AudioCastService) {
         stateObservationJob?.cancel()
@@ -96,7 +95,9 @@ class MediaNotificationListener : NotificationListenerService() {
         val transportControls = controller.transportControls
         when (command) {
             MediaCommand.PLAY -> transportControls.play()
+
             MediaCommand.PAUSE -> transportControls.pause()
+
             MediaCommand.TOGGLE -> {
                 val state = controller.playbackState?.state
                 if (state == PlaybackState.STATE_PLAYING) {
@@ -105,8 +106,11 @@ class MediaNotificationListener : NotificationListenerService() {
                     transportControls.play()
                 }
             }
+
             MediaCommand.NEXT -> transportControls.skipToNext()
+
             MediaCommand.PREVIOUS -> transportControls.skipToPrevious()
+
             MediaCommand.STOP -> transportControls.stop()
         }
         Log.d(TAG, "Executed command: $command on ${controller.packageName}")
@@ -129,8 +133,9 @@ class MediaNotificationListener : NotificationListenerService() {
     private fun handleMediaSessionsChanged() {
         val mediaControllers = getActiveMediaControllers()
         // Prioritize the one that is currently playing
-        val newMediaController = mediaControllers.find { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-            ?: mediaControllers.firstOrNull()
+        val newMediaController =
+            mediaControllers.find { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+                ?: mediaControllers.firstOrNull()
 
         if (newMediaController?.packageName != activeMediaController?.packageName) {
             activeMediaController?.unregisterCallback(mediaControllerCallback)
@@ -138,13 +143,12 @@ class MediaNotificationListener : NotificationListenerService() {
             activeMediaController?.registerCallback(mediaControllerCallback)
             Log.d(TAG, "Switched media controller to: ${newMediaController?.packageName}")
             syncMetadata()
-            
+
             if (activeMediaController?.playbackState?.state == PlaybackState.STATE_PLAYING) {
                 startPositionUpdates()
             } else {
                 positionUpdateJob?.cancel()
             }
-
         } else if (newMediaController == null && activeMediaController != null) {
             activeMediaController?.unregisterCallback(mediaControllerCallback)
             activeMediaController = null
@@ -167,7 +171,10 @@ class MediaNotificationListener : NotificationListenerService() {
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
-            Log.d(TAG, "onMetadataChanged: ${metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)}")
+            Log.d(
+                TAG,
+                "onMetadataChanged: ${metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)}"
+            )
             syncMetadata()
         }
 
@@ -207,7 +214,7 @@ class MediaNotificationListener : NotificationListenerService() {
         var artworkBytes: ByteArray? = null
         val bitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
-        
+
         if (bitmap != null) {
             val stream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
@@ -222,7 +229,7 @@ class MediaNotificationListener : NotificationListenerService() {
                         // For web URLs, we just pass them through as is
                     } else {
                         // For local URIs (content://), we read them into bytes
-                        contentResolver.openInputStream(uri)?.use { 
+                        contentResolver.openInputStream(uri)?.use {
                             artworkBytes = it.readBytes()
                         }
                     }
@@ -238,12 +245,14 @@ class MediaNotificationListener : NotificationListenerService() {
             title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE),
             artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST),
             album = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM),
-            artworkUrl = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI) ?: metadata?.getString(MediaMetadata.METADATA_KEY_ART_URI),
+            artworkUrl =
+                metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+                    ?: metadata?.getString(MediaMetadata.METADATA_KEY_ART_URI),
             durationMs = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.takeIf { it > 0 },
             positionMs = position,
             isPlaying = isPlaying
         )
-        
+
         Log.d(TAG, "Syncing metadata: ${track.title} - isPlaying=$isPlaying @ $position")
         service.sendMetadata(track)
     }
@@ -281,7 +290,10 @@ class MediaNotificationListener : NotificationListenerService() {
                 context.contentResolver,
                 "enabled_notification_listeners"
             )
-            val componentName = ComponentName(context, MediaNotificationListener::class.java).flattenToString()
+            val componentName = ComponentName(
+                context,
+                MediaNotificationListener::class.java
+            ).flattenToString()
             return enabledListeners?.contains(componentName) == true
         }
     }

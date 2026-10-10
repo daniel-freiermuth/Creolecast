@@ -16,21 +16,26 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
-import android.media.MediaRoute2Info
 import android.media.MediaMetadata
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
-import android.media.VolumeProvider
+import android.media.MediaRoute2Info
 import android.media.MediaRouter2
 import android.media.RouteDiscoveryPreference
+import android.media.VolumeProvider
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
+import com.creolecast.app.airplay2.AirPlay2Client
+import com.creolecast.app.airplay2.AndroidCredentialStore
+import com.creolecast.app.airplay2.NeedsPinException
+import com.creolecast.app.raop.AudioResampler
+import com.creolecast.app.raop.RaopCrypto
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
@@ -42,6 +47,25 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.websocket.*
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URL
+import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlin.math.pow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -55,30 +79,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import org.json.JSONObject
-import com.creolecast.app.airplay2.AirPlay2Client
-import com.creolecast.app.airplay2.AndroidCredentialStore
-import com.creolecast.app.airplay2.NeedsPinException
-import com.creolecast.app.raop.AudioResampler
-import com.creolecast.app.raop.RaopCrypto
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
-import java.io.OutputStream
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.NetworkInterface
-import java.net.ServerSocket
-import java.net.Socket
-import java.net.URL
-import java.net.URLEncoder
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.UUID
-import java.util.concurrent.TimeUnit
-import java.util.Locale
-import kotlin.math.pow
 
 data class CastDestination(
     val name: String,
@@ -101,30 +101,42 @@ class AudioCastService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var mediaSession: MediaSession? = null
     private var receiverVolumeSteps: Int = MAX_VOLUME_STEPS
-    
+
     private lateinit var sharedPreferences: SharedPreferences
     private lateinit var securePreferences: SharedPreferences
     private lateinit var audioManager: AudioManager
     private var originalVolume: Int = 0
-    
+
     private val _activeDestinations = MutableStateFlow<List<CastDestination>>(emptyList())
     val activeDestinations: StateFlow<List<CastDestination>> = _activeDestinations.asStateFlow()
-    
+
     // These are all mutated from independent Dispatchers.IO coroutines (one per cast
     // destination, plus the metadata refresh timer and volume commands running
     // concurrently), so a plain HashMap/HashSet here is a real ConcurrentModificationException
     // risk - e.g. hitting Stop while a metadata push is in flight. synchronizedMap/Set
     // (rather than ConcurrentHashMap) because raopSessions legitimately stores null values.
-    private val controlSessions = java.util.Collections.synchronizedMap(mutableMapOf<String, DefaultClientWebSocketSession>())
+    private val controlSessions = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, DefaultClientWebSocketSession>()
+    )
     private val raopSockets = java.util.Collections.synchronizedMap(mutableMapOf<String, Socket>())
     private val raopCSeqs = java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
-    private val raopSessions = java.util.Collections.synchronizedMap(mutableMapOf<String, String?>())
-    private val airplaySessionIds = java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
-    private val ap2Clients = java.util.Collections.synchronizedMap(mutableMapOf<String, AirPlay2Client>())
-    private val lastSentMetadata = java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
-    private val unsupportedSetProperty = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-    
-    private val dacpId by lazy { 
+    private val raopSessions = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, String?>()
+    )
+    private val airplaySessionIds = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, String>()
+    )
+    private val ap2Clients = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, AirPlay2Client>()
+    )
+    private val lastSentMetadata = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, String>()
+    )
+    private val unsupportedSetProperty = java.util.Collections.synchronizedSet(
+        mutableSetOf<String>()
+    )
+
+    private val dacpId by lazy {
         sharedPreferences.getString("dacp_id", null) ?: run {
             val id = UUID.randomUUID().toString().replace("-", "").take(16).uppercase()
             sharedPreferences.edit().putString("dacp_id", id).apply()
@@ -147,7 +159,13 @@ class AudioCastService : Service() {
     }
 
     val serverHost: String? get() = _activeDestinations.value.firstOrNull()?.host
-    val serverName: String? get() = if (_activeDestinations.value.size > 1) "Multiroom Group" else _activeDestinations.value.firstOrNull()?.name
+    val serverName: String? get() = if (_activeDestinations.value.size >
+        1
+    ) {
+        "Multiroom Group"
+    } else {
+        _activeDestinations.value.firstOrNull()?.name
+    }
     val serverPort: Int get() = _activeDestinations.value.firstOrNull()?.port ?: 0
     val serverPlatform: String? get() = _activeDestinations.value.firstOrNull()?.platform
 
@@ -185,10 +203,12 @@ class AudioCastService : Service() {
                 level = LogLevel.INFO
             }
             install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    isLenient = true
-                })
+                json(
+                    Json {
+                        ignoreUnknownKeys = true
+                        isLenient = true
+                    }
+                )
             }
         }
     }
@@ -229,7 +249,8 @@ class AudioCastService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjectionManager =
+            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         securePreferences = getSharedPreferences(SECURE_PREFS_NAME, MODE_PRIVATE)
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -238,10 +259,12 @@ class AudioCastService : Service() {
         // routes when targeting our package's MediaSession.  Without this, the
         // picker has no discovery preferences for us and shows nothing.
         val router = MediaRouter2.getInstance(this)
-        router.registerRouteCallback(mainExecutor, object : MediaRouter2.RouteCallback() {},
+        router.registerRouteCallback(
+            mainExecutor,
+            object : MediaRouter2.RouteCallback() {},
             RouteDiscoveryPreference.Builder(
                 listOf(MediaRoute2Info.FEATURE_LIVE_AUDIO, MediaRoute2Info.FEATURE_REMOTE_PLAYBACK),
-                true  // activeScan
+                true // activeScan
             ).build()
         )
 
@@ -271,7 +294,9 @@ class AudioCastService : Service() {
 
     private fun startArtworkServer() {
         artworkServerJob?.cancel()
-        try { artworkServerSocket?.close() } catch (e: Exception) {}
+        try {
+            artworkServerSocket?.close()
+        } catch (e: Exception) {}
         artworkServerJob = scope.launch(Dispatchers.IO) {
             try {
                 val serverSocket = ServerSocket()
@@ -279,7 +304,12 @@ class AudioCastService : Service() {
                 serverSocket.bind(java.net.InetSocketAddress(ARTWORK_PORT))
                 artworkServerSocket = serverSocket
                 while (isActive) {
-                    val clientSocket = try { serverSocket.accept() } catch (e: Exception) { null } ?: continue
+                    val clientSocket =
+                        try {
+                            serverSocket.accept()
+                        } catch (e: Exception) {
+                            null
+                        } ?: continue
                     launch {
                         try {
                             clientSocket.soTimeout = 10000
@@ -301,7 +331,9 @@ class AudioCastService : Service() {
                             output.flush()
                         } catch (e: Exception) {
                         } finally {
-                            try { clientSocket.close() } catch (e: Exception) {}
+                            try {
+                                clientSocket.close()
+                            } catch (e: Exception) {}
                         }
                     }
                 }
@@ -316,7 +348,10 @@ class AudioCastService : Service() {
             ACTION_START -> {
                 cleanupSession()
 
-                val mediaProjectionToken = intent.getParcelableExtra(EXTRA_MEDIA_PROJECTION_TOKEN, Intent::class.java)
+                val mediaProjectionToken = intent.getParcelableExtra(
+                    EXTRA_MEDIA_PROJECTION_TOKEN,
+                    Intent::class.java
+                )
 
                 val destination = parseDestination(intent)
                 if (mediaProjectionToken != null && destination != null) {
@@ -324,14 +359,17 @@ class AudioCastService : Service() {
                 }
                 return START_STICKY
             }
+
             ACTION_STOP -> {
                 stopCasting()
                 return START_NOT_STICKY
             }
+
             ACTION_VOLUME_UP -> {
                 adjustNotificationVolume(1)
                 return START_STICKY
             }
+
             ACTION_VOLUME_DOWN -> {
                 adjustNotificationVolume(-1)
                 return START_STICKY
@@ -354,8 +392,6 @@ class AudioCastService : Service() {
             null
         }
     }
-
-
 
     @SuppressLint("MissingPermission")
     private fun startCasting(mediaProjectionToken: Intent, destination: CastDestination) {
@@ -384,7 +420,11 @@ class AudioCastService : Service() {
         } catch (e: Exception) {
             if (e is ForegroundServiceStartNotAllowedException) {
                 Log.e(TAG, "Foreground service start not allowed", e)
-                PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "Foreground service start not allowed: ${e.message}")
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.HANDSHAKE,
+                    "Foreground service start not allowed: ${e.message}"
+                )
                 _state.value = CastState.ERROR
                 return
             } else {
@@ -398,10 +438,17 @@ class AudioCastService : Service() {
         }
 
         // MediaProjection token is single-use on Android 14+; obtain it once before any retries.
-        val projection = mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, mediaProjectionToken)
+        val projection = mediaProjectionManager.getMediaProjection(
+            Activity.RESULT_OK,
+            mediaProjectionToken
+        )
         if (projection == null) {
             Log.e(TAG, "MediaProjection is null")
-            PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "MediaProjection permission was not granted")
+            PacketLogger.log(
+                PacketDirection.IN,
+                PacketType.HANDSHAKE,
+                "MediaProjection permission was not granted"
+            )
             stopVolumeSession()
             releaseWakeLock()
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
@@ -427,7 +474,11 @@ class AudioCastService : Service() {
 
                 try {
                     val captureRate = captureSampleRate(destination.platform)
-                    val minBufSize = AudioRecord.getMinBufferSize(captureRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+                    val minBufSize = AudioRecord.getMinBufferSize(
+                        captureRate,
+                        AudioFormat.CHANNEL_IN_STEREO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    )
                     val bufferSize = (FRAME_SIZE * 4).coerceAtLeast(minBufSize)
 
                     val recorder = AudioRecord.Builder()
@@ -447,22 +498,33 @@ class AudioCastService : Service() {
                         initialized = true
                     } else {
                         Log.e(TAG, "AudioRecord not initialized, attempt $attempt")
-                        PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "AudioRecord not initialized (attempt $attempt)")
+                        PacketLogger.log(
+                            PacketDirection.IN,
+                            PacketType.AUDIO,
+                            "AudioRecord not initialized (attempt $attempt)"
+                        )
                         recorder.release()
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "AudioRecord initialization attempt $attempt failed: ${e.message}")
-                    PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "AudioRecord init failed (attempt $attempt): ${e.message}")
+                    PacketLogger.log(
+                        PacketDirection.IN,
+                        PacketType.AUDIO,
+                        "AudioRecord init failed (attempt $attempt): ${e.message}"
+                    )
                 }
             }
 
             if (!initialized) {
                 Log.e(TAG, "Failed to initialize AudioRecord after $attempt attempts")
-                PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "AudioRecord failed to initialize after $attempt attempts — check Microphone permission for CreoleCast")
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.AUDIO,
+                    "AudioRecord failed to initialize after $attempt attempts — check Microphone permission for CreoleCast"
+                )
                 _state.value = CastState.ERROR
                 return@launch
             }
-
 
             if (destination.platform in listOf("DLNA", "Google Cast", "AirPlay")) {
                 startDlnaHttpServer()
@@ -472,7 +534,11 @@ class AudioCastService : Service() {
             launch {
                 try {
                     audioRecord?.startRecording()
-                    PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "AudioRecord capture started")
+                    PacketLogger.log(
+                        PacketDirection.IN,
+                        PacketType.AUDIO,
+                        "AudioRecord capture started"
+                    )
                     val audioBuffer = ByteBuffer.allocate(FRAME_SIZE)
                     var lastFrameWasSilent: Boolean? = null
                     while (isActive) {
@@ -483,37 +549,54 @@ class AudioCastService : Service() {
                             if (isSilent != lastFrameWasSilent) {
                                 lastFrameWasSilent = isSilent
                                 PacketLogger.log(
-                                    PacketDirection.IN, PacketType.AUDIO,
-                                    if (isSilent) "Capture is silent — no audio signal detected (check DRM/FLAG_SECURE source, or that something is actually playing)"
-                                    else "Capture is producing a real audio signal"
+                                    PacketDirection.IN,
+                                    PacketType.AUDIO,
+                                    if (isSilent) {
+                                        "Capture is silent — no audio signal detected (check DRM/FLAG_SECURE source, or that something is actually playing)"
+                                    } else {
+                                        "Capture is producing a real audio signal"
+                                    }
                                 )
                             }
                             _audioBufferFlow.emit(frame)
                         } else if (readResult < 0) {
                             Log.e(TAG, "AudioRecord read error: $readResult")
-                            PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "AudioRecord read error: $readResult")
+                            PacketLogger.log(
+                                PacketDirection.IN,
+                                PacketType.AUDIO,
+                                "AudioRecord read error: $readResult"
+                            )
                             break
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Audio recording loop failed", e)
-                    PacketLogger.log(PacketDirection.IN, PacketType.AUDIO, "Audio recording loop crashed: ${e.message}")
+                    PacketLogger.log(
+                        PacketDirection.IN,
+                        PacketType.AUDIO,
+                        "Audio recording loop crashed: ${e.message}"
+                    )
                 }
             }
 
             when (destination.platform) {
                 "DLNA" -> launch { startDlnaSession(destination) }
+
                 "Google Cast" -> launch { startGoogleCastSession(destination) }
+
                 "AirPlay" -> launch { startAirPlaySession(destination) }
+
                 "AirPlay2" -> launch { startAirPlay2Session(destination) }
+
                 "Snapcast" -> launch { startSnapcastSession(destination) }
+
                 else -> {
                     launch { startControlSession(destination) }
                     launch { startAudioSession(destination) }
                     launch { startStatsSession(destination) }
                 }
             }
-            
+
             startMetadataRefreshLoop()
             _metadata.value?.let { sendMetadata(it) }
         }
@@ -526,7 +609,9 @@ class AudioCastService : Service() {
 
     private fun startDlnaHttpServer() {
         dlnaHttpServerJob?.cancel()
-        try { streamServerSocket?.close() } catch (e: Exception) {}
+        try {
+            streamServerSocket?.close()
+        } catch (e: Exception) {}
         dlnaHttpServerJob = scope.launch(Dispatchers.IO) {
             try {
                 val serverSocket = ServerSocket()
@@ -535,20 +620,27 @@ class AudioCastService : Service() {
                 streamServerSocket = serverSocket
                 Log.i(TAG, "Stream server started on port $STREAM_PORT")
                 while (isActive) {
-                    val clientSocket = try { serverSocket.accept() } catch (e: Exception) { null } ?: continue
+                    val clientSocket =
+                        try {
+                            serverSocket.accept()
+                        } catch (e: Exception) {
+                            null
+                        } ?: continue
                     launch {
                         try {
                             clientSocket.setTcpNoDelay(true)
                             clientSocket.soTimeout = 30000
                             val input = clientSocket.getInputStream().bufferedReader()
                             val output = clientSocket.getOutputStream()
-                            
+
                             val requestLine = input.readLine() ?: return@launch
                             Log.d(TAG, "Stream request: $requestLine")
-                            
+
                             val headers = mutableMapOf<String, String>()
                             var line: String?
-                            while (input.readLine().also { line = it } != null && line!!.isNotEmpty()) {
+                            while (input.readLine().also { line = it } != null &&
+                                line!!.isNotEmpty()
+                            ) {
                                 Log.d(TAG, "  Header: $line")
                                 val parts = line!!.split(": ", limit = 2)
                                 if (parts.size == 2) {
@@ -557,10 +649,10 @@ class AudioCastService : Service() {
                             }
 
                             val ua = headers["user-agent"] ?: ""
-                            val isApple = ua.contains("Apple", ignoreCase = true) || 
-                                           ua.contains("Darwin", ignoreCase = true) ||
-                                           ua.contains("libmpv", ignoreCase = true)
-                            
+                            val isApple = ua.contains("Apple", ignoreCase = true) ||
+                                ua.contains("Darwin", ignoreCase = true) ||
+                                ua.contains("libmpv", ignoreCase = true)
+
                             val contentType = if (isApple) "audio/x-wav" else "audio/wav"
 
                             val responseHeaders = StringBuilder()
@@ -568,14 +660,16 @@ class AudioCastService : Service() {
                             responseHeaders.append("Content-Type: $contentType\r\n")
                             responseHeaders.append("Server: AirTunes/220.68\r\n")
                             responseHeaders.append("Connection: close\r\n")
-                            responseHeaders.append("Cache-Control: no-cache, no-store, must-revalidate\r\n")
+                            responseHeaders.append(
+                                "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                            )
                             responseHeaders.append("Pragma: no-cache\r\n")
                             responseHeaders.append("Expires: 0\r\n")
                             responseHeaders.append("ICY-NAME: CreoleCast Stream\r\n")
                             responseHeaders.append("ICY-METADATA: 0\r\n")
                             responseHeaders.append("Access-Control-Allow-Origin: *\r\n")
                             responseHeaders.append("\r\n")
-                            
+
                             output.write(responseHeaders.toString().toByteArray())
 
                             if (requestLine.startsWith("HEAD")) {
@@ -587,16 +681,16 @@ class AudioCastService : Service() {
                             val header = ByteBuffer.allocate(44).apply {
                                 order(ByteOrder.LITTLE_ENDIAN)
                                 put("RIFF".toByteArray())
-                                putInt(-1) 
+                                putInt(-1)
                                 put("WAVE".toByteArray())
                                 put("fmt ".toByteArray())
                                 putInt(16)
                                 putShort(1.toShort())
-                                putShort(2.toShort()) 
+                                putShort(2.toShort())
                                 putInt(SAMPLE_RATE)
-                                putInt(SAMPLE_RATE * 4) 
-                                putShort(4.toShort()) 
-                                putShort(16.toShort()) 
+                                putInt(SAMPLE_RATE * 4)
+                                putShort(4.toShort())
+                                putShort(16.toShort())
                                 put("data".toByteArray())
                                 putInt(-1)
                             }
@@ -613,7 +707,9 @@ class AudioCastService : Service() {
                         } catch (e: Exception) {
                             Log.d(TAG, "Streaming session ended: ${e.message}")
                         } finally {
-                            try { clientSocket.close() } catch (e: Exception) {}
+                            try {
+                                clientSocket.close()
+                            } catch (e: Exception) {}
                         }
                     }
                 }
@@ -639,7 +735,8 @@ class AudioCastService : Service() {
                                 <InstanceID>0</InstanceID>
                             </u:Stop>
                         </s:Body>
-                    </s:Envelope>""".trimIndent()
+                    </s:Envelope>
+                """.trimIndent()
                 client.post(controlUrl) {
                     header("SoapAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"")
                     contentType(ContentType.parse("text/xml; charset=utf-8"))
@@ -649,10 +746,17 @@ class AudioCastService : Service() {
 
             val metadataXml = createDidlMetadata(streamUrl, _metadata.value)
 
-            val setUriBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(streamUrl)}</CurrentURI><CurrentURIMetaData>${escapeXml(metadataXml)}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
+            val setUriBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(
+                streamUrl
+            )}</CurrentURI><CurrentURIMetaData>${escapeXml(
+                metadataXml
+            )}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
 
             client.post(controlUrl) {
-                header("SoapAction", "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
+                header(
+                    "SoapAction",
+                    "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\""
+                )
                 contentType(ContentType.parse("text/xml; charset=utf-8"))
                 setBody(setUriBody)
             }
@@ -678,10 +782,10 @@ class AudioCastService : Service() {
     private suspend fun startGoogleCastSession(dest: CastDestination) {
         val myIp = getLocalIpAddress() ?: return
         val streamUrl = "http://$myIp:$STREAM_PORT/stream.wav"
-        
+
         try {
             _state.value = CastState.CONNECTING
-            
+
             // Log available apps to help debugging 404s
             try {
                 val appsResponse = client.get("http://${dest.host}:8008/apps")
@@ -698,20 +802,23 @@ class AudioCastService : Service() {
             for (appId in appIds) {
                 try {
                     val launchUrl = "http://${dest.host}:8008/apps/$appId"
-                    
+
                     // Try both 'url' and 'v' parameters
                     val payloads = listOf("url=$encodedUrl", "v=$encodedUrl")
-                    
+
                     for (payload in payloads) {
                         val response = client.post(launchUrl) {
                             setBody(payload)
                             contentType(ContentType.Application.FormUrlEncoded)
                             timeout { requestTimeoutMillis = 5000 }
                         }
-                        
+
                         if (response.status.value in 200..299 || response.status.value == 201) {
                             launched = true
-                            Log.d(TAG, "Successfully launched Google Cast app: $appId with payload: $payload")
+                            Log.d(
+                                TAG,
+                                "Successfully launched Google Cast app: $appId with payload: $payload"
+                            )
                             break
                         }
                     }
@@ -720,7 +827,7 @@ class AudioCastService : Service() {
                     Log.d(TAG, "Failed to launch $appId: ${e.message}")
                 }
             }
-            
+
             // Special fallback for own-tone style mirroring if standard fails
             if (!launched) {
                 try {
@@ -732,7 +839,7 @@ class AudioCastService : Service() {
                     if (resp.status.value in 200..299) launched = true
                 } catch (e: Exception) {}
             }
-            
+
             if (launched) {
                 _state.value = CastState.CASTING
                 updateNotification()
@@ -756,7 +863,6 @@ class AudioCastService : Service() {
             // For audio-only casting, RAOP (RTSP) is much more reliable and standard.
             // We force RAOP handshake here.
             performRaopHandshake(dest, myIp)
-
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -773,9 +879,16 @@ class AudioCastService : Service() {
             // TXT pk is a 64-char hex string representing the 32-byte Ed25519 public key
             val pkHex = ExtraFields.get(extra, "pk")
             val txtPk = if (pkHex?.length == 64) {
-                try { ByteArray(32) { i -> pkHex.substring(i * 2, i * 2 + 2).toInt(16).toByte() } }
-                catch (e: Exception) { null }
-            } else null
+                try {
+                    ByteArray(32) { i -> pkHex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+                } catch (
+                    e: Exception
+                ) {
+                    null
+                }
+            } else {
+                null
+            }
 
             // Long-term HomeKit pairing identities, keyed by the receiver's
             // AirPlay DeviceID, so pair-verify can reuse the key pair that
@@ -784,7 +897,7 @@ class AudioCastService : Service() {
 
             // Load any PIN previously saved for this device
             var pin: String? = securePreferences.getString("airplay2_pin_${dest.host}", null)
-            var clearPinOnFailure = pin != null  // stale saved pin should be wiped if connect() fails
+            var clearPinOnFailure = pin != null // stale saved pin should be wiped if connect() fails
 
             while (true) {
                 val ap2Client = AirPlay2Client(
@@ -803,7 +916,9 @@ class AudioCastService : Service() {
 
                 ap2Client.eventListener = object : AirPlay2Client.EventListener {
                     override fun onRemoteCommand(command: String) {
-                        val cmd = MediaCommand.entries.find { it.name.equals(command, ignoreCase = true) }
+                        val cmd = MediaCommand.entries.find {
+                            it.name.equals(command, ignoreCase = true)
+                        }
                         if (cmd != null) scope.launch { _controlCommands.emit(cmd) }
                     }
                 }
@@ -849,9 +964,11 @@ class AudioCastService : Service() {
                 updateNotification()
 
                 ap2Clients[dest.host] = ap2Client
-                _metadata.value?.let { ap2Client.sendMetadata(it.title, it.artist, it.album, currentArtworkBytes) }
+                _metadata.value?.let {
+                    ap2Client.sendMetadata(it.title, it.artist, it.album, currentArtworkBytes)
+                }
 
-                val alacFrameBytes = AP2_ALAC_FRAME_SIZE * 2 * 2  // 352 samples * 2 ch * 2 bytes
+                val alacFrameBytes = AP2_ALAC_FRAME_SIZE * 2 * 2 // 352 samples * 2 ch * 2 bytes
                 val buf = ByteArrayOutputStream()
 
                 try {
@@ -861,7 +978,15 @@ class AudioCastService : Service() {
                             val arr = buf.toByteArray()
                             val frame = arr.copyOfRange(0, alacFrameBytes)
                             buf.reset()
-                            if (arr.size > alacFrameBytes) buf.write(arr, alacFrameBytes, arr.size - alacFrameBytes)
+                            if (arr.size >
+                                alacFrameBytes
+                            ) {
+                                buf.write(
+                                    arr,
+                                    alacFrameBytes,
+                                    arr.size - alacFrameBytes
+                                )
+                            }
                             ap2Client.sendAudioFrame(frame)
                         }
                     }
@@ -952,9 +1077,15 @@ class AudioCastService : Service() {
                 val name = if (nameAttempt == 0) baseName else "$baseName (${nameAttempt + 1})"
                 val port = audioPort + portAttempt
 
-                val resp = rpcCall("Stream.AddStream", JSONObject().apply {
-                    put("streamUri", "tcp://0.0.0.0:$port?name=$name&sampleformat=48000:16:2&mode=server")
-                })
+                val resp = rpcCall(
+                    "Stream.AddStream",
+                    JSONObject().apply {
+                        put(
+                            "streamUri",
+                            "tcp://0.0.0.0:$port?name=$name&sampleformat=48000:16:2&mode=server"
+                        )
+                    }
+                )
 
                 if (!resp.has("error")) {
                     streamId = resp.getJSONObject("result").optString("id", name)
@@ -966,7 +1097,9 @@ class AudioCastService : Service() {
                 if (errData.contains("already exists", ignoreCase = true)) {
                     nameAttempt++
                     Log.d(TAG, "Snapcast: name '$name' taken, trying next name")
-                } else if (errData.contains("Address already in use", ignoreCase = true) || errData.contains("bind", ignoreCase = true)) {
+                } else if (errData.contains("Address already in use", ignoreCase = true) ||
+                    errData.contains("bind", ignoreCase = true)
+                ) {
                     portAttempt++
                     Log.d(TAG, "Snapcast: port $port in use, trying next port")
                 } else {
@@ -1008,13 +1141,19 @@ class AudioCastService : Service() {
                     val groupId = group.getString("id")
                     saved[groupId] = group.getString("stream_id")
 
-                    rpcCall("Group.SetStream", JSONObject().apply {
-                        put("id", groupId)
-                        put("stream_id", streamId)
-                    })
+                    rpcCall(
+                        "Group.SetStream",
+                        JSONObject().apply {
+                            put("id", groupId)
+                            put("stream_id", streamId)
+                        }
+                    )
                 }
                 previousGroupStreams = saved
-                Log.d(TAG, "Snapcast: assigned ${groups.length()} group(s), saved previous assignments")
+                Log.d(
+                    TAG,
+                    "Snapcast: assigned ${groups.length()} group(s), saved previous assignments"
+                )
             } catch (e: Exception) {
                 Log.w(TAG, "Snapcast: failed to assign groups: ${e.message}")
             }
@@ -1025,7 +1164,9 @@ class AudioCastService : Service() {
                     audioOut.write(buffer)
                 }
             } finally {
-                try { audioSocket.close() } catch (_: Exception) {}
+                try {
+                    audioSocket.close()
+                } catch (_: Exception) {}
             }
         } catch (e: CancellationException) {
             throw e
@@ -1038,10 +1179,13 @@ class AudioCastService : Service() {
                 try {
                     // Restore groups to their previous streams
                     previousGroupStreams?.forEach { (groupId, prevStreamId) ->
-                        rpcCall("Group.SetStream", JSONObject().apply {
-                            put("id", groupId)
-                            put("stream_id", prevStreamId)
-                        })
+                        rpcCall(
+                            "Group.SetStream",
+                            JSONObject().apply {
+                                put("id", groupId)
+                                put("stream_id", prevStreamId)
+                            }
+                        )
                     }
                     if (previousGroupStreams != null) {
                         Log.d(TAG, "Snapcast: restored previous group assignments")
@@ -1054,69 +1198,95 @@ class AudioCastService : Service() {
                     }
                 } catch (_: Exception) {}
             }
-            try { rpcSocket?.close() } catch (_: Exception) {}
-            try { audioSocket?.close() } catch (_: Exception) {}
+            try {
+                rpcSocket?.close()
+            } catch (_: Exception) {}
+            try {
+                audioSocket?.close()
+            } catch (_: Exception) {}
         }
     }
 
-    private suspend fun performRaopHandshake(dest: CastDestination, myIp: String) = withContext(Dispatchers.IO) {
-        // UDP sockets for audio, control, and timing
-        val audioUdp = DatagramSocket(0)
-        val controlUdp = DatagramSocket(0)
-        val timingUdp = DatagramSocket(0)
+    private suspend fun performRaopHandshake(dest: CastDestination, myIp: String) =
+        withContext(Dispatchers.IO) {
+            // UDP sockets for audio, control, and timing
+            val audioUdp = DatagramSocket(0)
+            val controlUdp = DatagramSocket(0)
+            val timingUdp = DatagramSocket(0)
 
-        try {
-            val advertisedPort = if (dest.port > 0) dest.port else 5000
-            val portsToTry = if (advertisedPort == 7000) listOf(7000, 5000) else listOf(advertisedPort)
-
-            var socket: Socket? = null
-            for (port in portsToTry) {
-                try {
-                    val s = Socket()
-                    s.connect(java.net.InetSocketAddress(dest.host, port), 5000)
-                    socket = s
-                    break
-                } catch (e: Exception) {
-                    if (port == portsToTry.last()) throw e
-                    Log.d(TAG, "RAOP connect to ${dest.host}:$port failed, trying next port")
+            try {
+                val advertisedPort = if (dest.port > 0) dest.port else 5000
+                val portsToTry = if (advertisedPort ==
+                    7000
+                ) {
+                    listOf(7000, 5000)
+                } else {
+                    listOf(advertisedPort)
                 }
-            }
-            socket!!
-            val targetPort = socket.port
 
-            socket.soTimeout = 10000
-            socket.tcpNoDelay = true
-            raopSockets[dest.host] = socket
+                var socket: Socket? = null
+                for (port in portsToTry) {
+                    try {
+                        val s = Socket()
+                        s.connect(java.net.InetSocketAddress(dest.host, port), 5000)
+                        socket = s
+                        break
+                    } catch (e: Exception) {
+                        if (port == portsToTry.last()) throw e
+                        Log.d(TAG, "RAOP connect to ${dest.host}:$port failed, trying next port")
+                    }
+                }
+                socket!!
+                val targetPort = socket.port
 
-            val input = socket.getInputStream()
-            val output = socket.getOutputStream()
-            var cseq = 0
-            raopCSeqs[dest.host] = cseq
+                socket.soTimeout = 10000
+                socket.tcpNoDelay = true
+                raopSockets[dest.host] = socket
 
-            val userAgent = "AirPlay/550.10"
-            val sessionGuid = UUID.randomUUID().toString()
-            val rtpSessionId = (10000000..99999999).random()
+                val input = socket.getInputStream()
+                val output = socket.getOutputStream()
+                var cseq = 0
+                raopCSeqs[dest.host] = cseq
 
-            val encryptionTypeBits = ExtraFields.get(dest.extra, "et")?.toIntOrNull() ?: 0
-            val wantsEncryption = (encryptionTypeBits and 1) != 0
-            var raopCrypto: RaopCrypto? = null
-            val cryptoSdp = if (wantsEncryption) {
-                try {
-                    val aesKey = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
-                    val aesIv = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
-                    val encryptedKey = RaopCrypto.encryptAesKey(aesKey)
-                    raopCrypto = RaopCrypto().apply { initAes(aesKey, aesIv) }
-                    val keyB64 = android.util.Base64.encodeToString(encryptedKey, android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
-                    val ivB64 = android.util.Base64.encodeToString(aesIv, android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
-                    "a=rsaaeskey:$keyB64\r\na=aesiv:$ivB64\r\n"
-                } catch (e: Exception) {
-                    Log.w(TAG, "RAOP encryption setup failed for ${dest.host}, falling back to unencrypted: ${e.message}")
-                    raopCrypto = null
+                val userAgent = "AirPlay/550.10"
+                val sessionGuid = UUID.randomUUID().toString()
+                val rtpSessionId = (10000000..99999999).random()
+
+                val encryptionTypeBits = ExtraFields.get(dest.extra, "et")?.toIntOrNull() ?: 0
+                val wantsEncryption = (encryptionTypeBits and 1) != 0
+                var raopCrypto: RaopCrypto? = null
+                val cryptoSdp = if (wantsEncryption) {
+                    try {
+                        val aesKey = ByteArray(16).also {
+                            java.security.SecureRandom().nextBytes(it)
+                        }
+                        val aesIv = ByteArray(16).also {
+                            java.security.SecureRandom().nextBytes(it)
+                        }
+                        val encryptedKey = RaopCrypto.encryptAesKey(aesKey)
+                        raopCrypto = RaopCrypto().apply { initAes(aesKey, aesIv) }
+                        val keyB64 = android.util.Base64.encodeToString(
+                            encryptedKey,
+                            android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+                        )
+                        val ivB64 = android.util.Base64.encodeToString(
+                            aesIv,
+                            android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+                        )
+                        "a=rsaaeskey:$keyB64\r\na=aesiv:$ivB64\r\n"
+                    } catch (e: Exception) {
+                        Log.w(
+                            TAG,
+                            "RAOP encryption setup failed for ${dest.host}, falling back to unencrypted: ${e.message}"
+                        )
+                        raopCrypto = null
+                        ""
+                    }
+                } else {
                     ""
                 }
-            } else ""
 
-            val sdp = "v=0\r\n" +
+                val sdp = "v=0\r\n" +
                     "o=iTunes $rtpSessionId 0 IN IP4 $myIp\r\n" +
                     "s=iTunes\r\n" +
                     "c=IN IP4 ${dest.host}\r\n" +
@@ -1127,238 +1297,329 @@ class AudioCastService : Service() {
                     cryptoSdp +
                     "a=control:rtp\r\n"
 
-            val commonHeaders = mutableMapOf(
-                "User-Agent" to userAgent,
-                "X-Apple-Session-ID" to sessionGuid,
-                "X-Apple-Device-ID" to "0x${airplayDeviceId.replace(":", "")}",
-                "Client-Instance" to dacpId.ifEmpty { "0000000000000000" }
-            )
-            if (dacpId.isNotEmpty()) commonHeaders["DACP-ID"] = dacpId
-            if (activeRemote.isNotEmpty()) commonHeaders["Active-Remote"] = activeRemote
+                val commonHeaders = mutableMapOf(
+                    "User-Agent" to userAgent,
+                    "X-Apple-Session-ID" to sessionGuid,
+                    "X-Apple-Device-ID" to "0x${airplayDeviceId.replace(":", "")}",
+                    "Client-Instance" to dacpId.ifEmpty { "0000000000000000" }
+                )
+                if (dacpId.isNotEmpty()) commonHeaders["DACP-ID"] = dacpId
+                if (activeRemote.isNotEmpty()) commonHeaders["Active-Remote"] = activeRemote
 
-            // 1. ANNOUNCE
-            sendRtspRequest(output, "ANNOUNCE", dest.host, targetPort, cseq++, commonHeaders + mapOf(
-                "Content-Type" to "application/sdp",
-                "Content-Length" to sdp.length.toString()
-            ), sdp)
-            readRtspResponse(input)
+                // 1. ANNOUNCE
+                sendRtspRequest(
+                    output,
+                    "ANNOUNCE",
+                    dest.host,
+                    targetPort,
+                    cseq++,
+                    commonHeaders + mapOf(
+                        "Content-Type" to "application/sdp",
+                        "Content-Length" to sdp.length.toString()
+                    ),
+                    sdp
+                )
+                readRtspResponse(input)
 
-            // 2. SETUP — advertise our UDP ports
-            sendRtspRequest(output, "SETUP", dest.host, targetPort, cseq++, commonHeaders + mapOf(
-                "Transport" to "RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;control_port=${controlUdp.localPort};timing_port=${timingUdp.localPort}"
-            ))
-            val setupResp = readRtspResponse(input)
-            val session = setupResp.find { it.startsWith("Session:", true) }?.substringAfter(":")?.substringBefore(";")?.trim()
-            raopSessions[dest.host] = session
+                // 2. SETUP — advertise our UDP ports
+                sendRtspRequest(
+                    output,
+                    "SETUP",
+                    dest.host,
+                    targetPort,
+                    cseq++,
+                    commonHeaders + mapOf(
+                        "Transport" to
+                            "RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;control_port=${controlUdp.localPort};timing_port=${timingUdp.localPort}"
+                    )
+                )
+                val setupResp = readRtspResponse(input)
+                val session = setupResp.find {
+                    it.startsWith("Session:", true)
+                }?.substringAfter(":")?.substringBefore(";")?.trim()
+                raopSessions[dest.host] = session
 
-            // Parse server's UDP ports from SETUP response Transport header
-            var serverAudioPort = 0
-            var serverControlPort = 0
-            var serverTimingPort = 0
-            val transportHeader = setupResp.find { it.startsWith("Transport:", true) }?.substringAfter(":") ?: ""
-            transportHeader.split(";").forEach { part ->
-                when {
-                    part.trim().startsWith("server_port=") -> serverAudioPort = part.substringAfter("=").toIntOrNull() ?: 0
-                    part.trim().startsWith("control_port=") -> serverControlPort = part.substringAfter("=").toIntOrNull() ?: 0
-                    part.trim().startsWith("timing_port=") -> serverTimingPort = part.substringAfter("=").toIntOrNull() ?: 0
-                }
-            }
-            Log.d(TAG, "RAOP SETUP: server audio=$serverAudioPort control=$serverControlPort timing=$serverTimingPort")
+                // Parse server's UDP ports from SETUP response Transport header
+                var serverAudioPort = 0
+                var serverControlPort = 0
+                var serverTimingPort = 0
+                val transportHeader =
+                    setupResp.find { it.startsWith("Transport:", true) }?.substringAfter(":") ?: ""
+                transportHeader.split(";").forEach { part ->
+                    when {
+                        part.trim().startsWith("server_port=") ->
+                            serverAudioPort =
+                                part.substringAfter("=").toIntOrNull() ?: 0
 
-            // 3. RECORD
-            sendRtspRequest(output, "RECORD", dest.host, targetPort, cseq++, commonHeaders + mapOf(
-                "Session" to (session ?: ""),
-                "Range" to "npt=0-",
-                "RTP-Info" to "seq=0;rtptime=$LATENCY"
-            ))
-            readRtspResponse(input)
+                        part.trim().startsWith("control_port=") ->
+                            serverControlPort =
+                                part.substringAfter("=").toIntOrNull() ?: 0
 
-            // 4. Set initial volume to 0 dB (full) — AirPlay range is -30 (silent) to 0 (max)
-            val volBody = "volume: 0.000000\r\n"
-            sendRtspRequest(output, "SET_PARAMETER", dest.host, targetPort, cseq++, commonHeaders + mapOf(
-                "Session" to (session ?: ""),
-                "Content-Type" to "text/parameters",
-                "Content-Length" to volBody.length.toString()
-            ), volBody)
-            readRtspResponse(input)
-
-            raopCSeqs[dest.host] = cseq
-
-            _state.value = CastState.CASTING
-            updateNotification()
-
-            // Initial metadata
-            _metadata.value?.let { updateRaopMetadata(dest.host, it) }
-
-            var sequence = 0
-            var timestamp = LATENCY
-            val serverAddr = InetAddress.getByName(dest.host)
-            // Anchor: wall-clock time when timestamp == LATENCY
-            val startTimeMs = System.currentTimeMillis()
-            val startTimestamp = LATENCY
-
-            // UDP timing thread — receives timing requests from server and replies
-            // In Classic AirPlay, the SERVER sends timing requests to the CLIENT
-            val timingJob = launch(Dispatchers.IO) {
-                try {
-                    timingUdp.soTimeout = 5000 // 5s timeout for debugging
-                    val buf = ByteArray(256)
-                    Log.d(TAG, "RAOP timing thread started, listening on port ${timingUdp.localPort}")
-                    while (isActive) {
-                        try {
-                            val pkt = DatagramPacket(buf, buf.size)
-                            timingUdp.receive(pkt)
-                            val data = pkt.data
-                            Log.d(TAG, "RAOP timing: received ${pkt.length} bytes from ${pkt.address}:${pkt.port}, type=0x${String.format("%02X", data[1])}")
-
-                            if (pkt.length >= 32) {
-                                val payloadType = data[1].toInt() and 0x7F
-                                if (payloadType == 0x52) { // Timing request (PT=82)
-                                    val reqSendSec = ByteBuffer.wrap(data, 24, 4).int
-                                    val reqSendFrac = ByteBuffer.wrap(data, 28, 4).int
-
-                                    val now = System.currentTimeMillis()
-                                    val ntpSec = (now / 1000) + 0x83AA7E80
-                                    val ntpFrac = ((now % 1000) * 0x100000000L / 1000).toInt()
-
-                                    val reply = ByteBuffer.allocate(32).apply {
-                                        put(0x80.toByte())
-                                        put(0xD3.toByte()) // Timing reply (PT=83 | marker)
-                                        putShort(7.toShort())
-                                        putInt(0) // padding
-                                        putInt(reqSendSec) // reference time (T1 from request)
-                                        putInt(reqSendFrac)
-                                        putInt(ntpSec.toInt()) // receive time (T2)
-                                        putInt(ntpFrac)
-                                        putInt(ntpSec.toInt()) // send time (T3)
-                                        putInt(ntpFrac)
-                                    }.array()
-
-                                    val replyPkt = DatagramPacket(reply, reply.size, pkt.address, pkt.port)
-                                    timingUdp.send(replyPkt)
-                                    Log.d(TAG, "RAOP timing: sent reply to ${pkt.address}:${pkt.port}")
-                                }
-                            }
-                        } catch (e: java.net.SocketTimeoutException) {
-                            Log.d(TAG, "RAOP timing: no packet received in 5s (port ${timingUdp.localPort})")
-                        }
+                        part.trim().startsWith("timing_port=") ->
+                            serverTimingPort =
+                                part.substringAfter("=").toIntOrNull() ?: 0
                     }
-                } catch (e: Exception) {
-                    if (isActive) Log.d(TAG, "RAOP timing thread ended: ${e.message}")
                 }
-            }
+                Log.d(
+                    TAG,
+                    "RAOP SETUP: server audio=$serverAudioPort control=$serverControlPort timing=$serverTimingPort"
+                )
 
-            // UDP sync thread — send periodic sync packets to keep the receiver's
-            // RTP-to-NTP mapping from drifting. AudioPlaybackCapture delivers audio
-            // in bursts, so the audio thread's timestamp can run ahead of wall clock.
-            // Without periodic re-anchoring, drift accumulates and audio stops.
-            val syncJob = launch(Dispatchers.IO) {
-                // Wait for the first NTP timing exchange to complete
-                delay(3000)
+                // 3. RECORD
+                sendRtspRequest(
+                    output,
+                    "RECORD",
+                    dest.host,
+                    targetPort,
+                    cseq++,
+                    commonHeaders + mapOf(
+                        "Session" to (session ?: ""),
+                        "Range" to "npt=0-",
+                        "RTP-Info" to "seq=0;rtptime=$LATENCY"
+                    )
+                )
+                readRtspResponse(input)
 
-                var isFirstSync = true
-                while (isActive) {
-                    val nowMs = System.currentTimeMillis()
-                    val ntpSec = (nowMs / 1000) + 0x83AA7E80
-                    val ntpFrac = ((nowMs % 1000) * 0x100000000L / 1000).toInt()
+                // 4. Set initial volume to 0 dB (full) — AirPlay range is -30 (silent) to 0 (max)
+                val volBody = "volume: 0.000000\r\n"
+                sendRtspRequest(
+                    output,
+                    "SET_PARAMETER",
+                    dest.host,
+                    targetPort,
+                    cseq++,
+                    commonHeaders + mapOf(
+                        "Session" to (session ?: ""),
+                        "Content-Type" to "text/parameters",
+                        "Content-Length" to volBody.length.toString()
+                    ),
+                    volBody
+                )
+                readRtspResponse(input)
 
-                    val elapsedMs = nowMs - startTimeMs
-                    val rtpNow = startTimestamp + (elapsedMs * 44100 / 1000).toInt()
+                raopCSeqs[dest.host] = cseq
 
-                    val syncPacket = ByteBuffer.allocate(20).apply {
-                        put((if (isFirstSync) 0x90 else 0x80).toByte())
-                        put(0xD4.toByte())
-                        putShort(7.toShort())
-                        putInt(rtpNow - LATENCY)
-                        putInt(ntpSec.toInt())
-                        putInt(ntpFrac)
-                        putInt(rtpNow)
-                    }.array()
+                _state.value = CastState.CASTING
+                updateNotification()
 
+                // Initial metadata
+                _metadata.value?.let { updateRaopMetadata(dest.host, it) }
+
+                var sequence = 0
+                var timestamp = LATENCY
+                val serverAddr = InetAddress.getByName(dest.host)
+                // Anchor: wall-clock time when timestamp == LATENCY
+                val startTimeMs = System.currentTimeMillis()
+                val startTimestamp = LATENCY
+
+                // UDP timing thread — receives timing requests from server and replies
+                // In Classic AirPlay, the SERVER sends timing requests to the CLIENT
+                val timingJob = launch(Dispatchers.IO) {
                     try {
-                        val pkt = DatagramPacket(syncPacket, syncPacket.size, serverAddr, serverControlPort)
-                        controlUdp.send(pkt)
-                    } catch (e: Exception) { break }
-                    isFirstSync = false
-                    delay(30_000) // re-anchor every 30 seconds
-                }
-            }
+                        timingUdp.soTimeout = 5000 // 5s timeout for debugging
+                        val buf = ByteArray(256)
+                        Log.d(
+                            TAG,
+                            "RAOP timing thread started, listening on port ${timingUdp.localPort}"
+                        )
+                        while (isActive) {
+                            try {
+                                val pkt = DatagramPacket(buf, buf.size)
+                                timingUdp.receive(pkt)
+                                val data = pkt.data
+                                Log.d(
+                                    TAG,
+                                    "RAOP timing: received ${pkt.length} bytes from ${pkt.address}:${pkt.port}, type=0x${String.format(
+                                        "%02X",
+                                        data[1]
+                                    )}"
+                                )
 
-            // Audio send loop — send RTP packets over UDP with ALAC uncompressed framing
-            // Accumulate exactly 1408 bytes (352 stereo samples) per ALAC frame
-            val FRAME_BYTES = 1408 // 352 samples × 2 channels × 2 bytes
-            try {
-                var isFirstPacket = true
-                val resampler = AudioResampler(channels = 2)
-                val accumulator = ByteArrayOutputStream(FRAME_BYTES * 2)
+                                if (pkt.length >= 32) {
+                                    val payloadType = data[1].toInt() and 0x7F
+                                    if (payloadType == 0x52) { // Timing request (PT=82)
+                                        val reqSendSec = ByteBuffer.wrap(data, 24, 4).int
+                                        val reqSendFrac = ByteBuffer.wrap(data, 28, 4).int
 
-                audioBufferFlow.collect { rawBuffer ->
-                    val buffer = rawBuffer // captured at 44100 Hz natively, no resampling
-                    accumulator.write(buffer)
+                                        val now = System.currentTimeMillis()
+                                        val ntpSec = (now / 1000) + 0x83AA7E80
+                                        val ntpFrac = ((now % 1000) * 0x100000000L / 1000).toInt()
 
-                    val accBytes = accumulator.toByteArray()
-                    var consumed = 0
-                    while (consumed + FRAME_BYTES <= accBytes.size) {
-                        val chunk = accBytes.copyOfRange(consumed, consumed + FRAME_BYTES)
-                        consumed += FRAME_BYTES
+                                        val reply = ByteBuffer.allocate(32).apply {
+                                            put(0x80.toByte())
+                                            put(0xD3.toByte()) // Timing reply (PT=83 | marker)
+                                            putShort(7.toShort())
+                                            putInt(0) // padding
+                                            putInt(reqSendSec) // reference time (T1 from request)
+                                            putInt(reqSendFrac)
+                                            putInt(ntpSec.toInt()) // receive time (T2)
+                                            putInt(ntpFrac)
+                                            putInt(ntpSec.toInt()) // send time (T3)
+                                            putInt(ntpFrac)
+                                        }.array()
 
-                        var alacFrame = alacEncodeUncompressedRaop(chunk)
-                        raopCrypto?.let { alacFrame = it.encryptAudio(alacFrame) }
-
-                        val rtpHeader = ByteBuffer.allocate(12).apply {
-                            put(0x80.toByte())
-                            put((if (isFirstPacket) 0xE0 else 0x60).toByte())
-                            putShort(sequence++.toShort())
-                            putInt(timestamp)
-                            putInt(rtpSessionId)
+                                        val replyPkt =
+                                            DatagramPacket(reply, reply.size, pkt.address, pkt.port)
+                                        timingUdp.send(replyPkt)
+                                        Log.d(
+                                            TAG,
+                                            "RAOP timing: sent reply to ${pkt.address}:${pkt.port}"
+                                        )
+                                    }
+                                }
+                            } catch (e: java.net.SocketTimeoutException) {
+                                Log.d(
+                                    TAG,
+                                    "RAOP timing: no packet received in 5s (port ${timingUdp.localPort})"
+                                )
+                            }
                         }
-                        timestamp += FRAME_BYTES / 4 // 352 samples
-                        isFirstPacket = false
-
-                        val payload = rtpHeader.array() + alacFrame
-                        val pkt = DatagramPacket(payload, payload.size, serverAddr, serverAudioPort)
-                        audioUdp.send(pkt)
-                    }
-
-                    // Keep unconsumed remainder for next round
-                    accumulator.reset()
-                    if (consumed < accBytes.size) {
-                        accumulator.write(accBytes, consumed, accBytes.size - consumed)
+                    } catch (e: Exception) {
+                        if (isActive) Log.d(TAG, "RAOP timing thread ended: ${e.message}")
                     }
                 }
-            } finally {
-                syncJob.cancel()
-                timingJob.cancel()
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "RAOP failed for ${dest.host}: ${e.message}")
-            withContext(NonCancellable) {
+
+                // UDP sync thread — send periodic sync packets to keep the receiver's
+                // RTP-to-NTP mapping from drifting. AudioPlaybackCapture delivers audio
+                // in bursts, so the audio thread's timestamp can run ahead of wall clock.
+                // Without periodic re-anchoring, drift accumulates and audio stops.
+                val syncJob = launch(Dispatchers.IO) {
+                    // Wait for the first NTP timing exchange to complete
+                    delay(3000)
+
+                    var isFirstSync = true
+                    while (isActive) {
+                        val nowMs = System.currentTimeMillis()
+                        val ntpSec = (nowMs / 1000) + 0x83AA7E80
+                        val ntpFrac = ((nowMs % 1000) * 0x100000000L / 1000).toInt()
+
+                        val elapsedMs = nowMs - startTimeMs
+                        val rtpNow = startTimestamp + (elapsedMs * 44100 / 1000).toInt()
+
+                        val syncPacket = ByteBuffer.allocate(20).apply {
+                            put((if (isFirstSync) 0x90 else 0x80).toByte())
+                            put(0xD4.toByte())
+                            putShort(7.toShort())
+                            putInt(rtpNow - LATENCY)
+                            putInt(ntpSec.toInt())
+                            putInt(ntpFrac)
+                            putInt(rtpNow)
+                        }.array()
+
+                        try {
+                            val pkt =
+                                DatagramPacket(
+                                    syncPacket,
+                                    syncPacket.size,
+                                    serverAddr,
+                                    serverControlPort
+                                )
+                            controlUdp.send(pkt)
+                        } catch (e: Exception) {
+                            break
+                        }
+                        isFirstSync = false
+                        delay(30_000) // re-anchor every 30 seconds
+                    }
+                }
+
+                // Audio send loop — send RTP packets over UDP with ALAC uncompressed framing
+                // Accumulate exactly 1408 bytes (352 stereo samples) per ALAC frame
+                val FRAME_BYTES = 1408 // 352 samples × 2 channels × 2 bytes
                 try {
-                    val socket = raopSockets[dest.host]
-                    val teardownOutput = if (socket != null && !socket.isClosed) socket.getOutputStream() else null
-                    if (teardownOutput != null) {
-                        synchronized(teardownOutput) {
-                            sendRtspRequest(teardownOutput, "TEARDOWN", dest.host, dest.port, raopCSeqs[dest.host] ?: 1, mapOf(
-                                "Session" to (raopSessions[dest.host] ?: ""),
-                                "User-Agent" to "AirPlay/366.0"
-                            ))
+                    var isFirstPacket = true
+                    val resampler = AudioResampler(channels = 2)
+                    val accumulator = ByteArrayOutputStream(FRAME_BYTES * 2)
+
+                    audioBufferFlow.collect { rawBuffer ->
+                        val buffer = rawBuffer // captured at 44100 Hz natively, no resampling
+                        accumulator.write(buffer)
+
+                        val accBytes = accumulator.toByteArray()
+                        var consumed = 0
+                        while (consumed + FRAME_BYTES <= accBytes.size) {
+                            val chunk = accBytes.copyOfRange(consumed, consumed + FRAME_BYTES)
+                            consumed += FRAME_BYTES
+
+                            var alacFrame = alacEncodeUncompressedRaop(chunk)
+                            raopCrypto?.let { alacFrame = it.encryptAudio(alacFrame) }
+
+                            val rtpHeader = ByteBuffer.allocate(12).apply {
+                                put(0x80.toByte())
+                                put((if (isFirstPacket) 0xE0 else 0x60).toByte())
+                                putShort(sequence++.toShort())
+                                putInt(timestamp)
+                                putInt(rtpSessionId)
+                            }
+                            timestamp += FRAME_BYTES / 4 // 352 samples
+                            isFirstPacket = false
+
+                            val payload = rtpHeader.array() + alacFrame
+                            val pkt =
+                                DatagramPacket(payload, payload.size, serverAddr, serverAudioPort)
+                            audioUdp.send(pkt)
+                        }
+
+                        // Keep unconsumed remainder for next round
+                        accumulator.reset()
+                        if (consumed < accBytes.size) {
+                            accumulator.write(accBytes, consumed, accBytes.size - consumed)
                         }
                     }
-                } catch (teardownError: Exception) {}
+                } finally {
+                    syncJob.cancel()
+                    timingJob.cancel()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "RAOP failed for ${dest.host}: ${e.message}")
+                withContext(NonCancellable) {
+                    try {
+                        val socket = raopSockets[dest.host]
+                        val teardownOutput = if (socket != null &&
+                            !socket.isClosed
+                        ) {
+                            socket.getOutputStream()
+                        } else {
+                            null
+                        }
+                        if (teardownOutput != null) {
+                            synchronized(teardownOutput) {
+                                sendRtspRequest(
+                                    teardownOutput,
+                                    "TEARDOWN",
+                                    dest.host,
+                                    dest.port,
+                                    raopCSeqs[dest.host] ?: 1,
+                                    mapOf(
+                                        "Session" to (raopSessions[dest.host] ?: ""),
+                                        "User-Agent" to "AirPlay/366.0"
+                                    )
+                                )
+                            }
+                        }
+                    } catch (teardownError: Exception) {}
+                }
+                raopSockets.remove(dest.host)?.close()
+                raopSessions.remove(dest.host)
+                raopCSeqs.remove(dest.host)
+            } finally {
+                audioUdp.close()
+                controlUdp.close()
+                timingUdp.close()
             }
-            raopSockets.remove(dest.host)?.close()
-            raopSessions.remove(dest.host)
-            raopCSeqs.remove(dest.host)
-        } finally {
-            audioUdp.close()
-            controlUdp.close()
-            timingUdp.close()
         }
-    }
 
-    private fun sendRtspRequest(output: OutputStream, method: String, host: String, port: Int, cseq: Int, headers: Map<String, String>, body: String? = null) {
+    private fun sendRtspRequest(
+        output: OutputStream,
+        method: String,
+        host: String,
+        port: Int,
+        cseq: Int,
+        headers: Map<String, String>,
+        body: String? = null
+    ) {
         val request = StringBuilder()
         request.append("$method rtsp://$host:$port/AriaCast RTSP/1.0\r\n")
         request.append("CSeq: $cseq\r\n")
@@ -1408,19 +1669,31 @@ class AudioCastService : Service() {
             try {
                 client.webSocket(host = dest.host, port = dest.port, path = "/audio") audioSocket@{
                     reconnectAttempts = 0
-                    PacketLogger.log(PacketDirection.OUT, PacketType.HANDSHAKE, "Audio socket connected to ${dest.name} (${dest.host}:${dest.port})")
+                    PacketLogger.log(
+                        PacketDirection.OUT,
+                        PacketType.HANDSHAKE,
+                        "Audio socket connected to ${dest.name} (${dest.host}:${dest.port})"
+                    )
 
                     if (dest.platform != "AriaCast") {
                         val handshakeFrame = try {
                             withTimeout(3000L) { incoming.receive() }
                         } catch (e: Exception) {
                             Log.w(TAG, "Audio handshake timed out for ${dest.host}: ${e.message}")
-                            PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "Handshake timed out for ${dest.name}: ${e.message}")
+                            PacketLogger.log(
+                                PacketDirection.IN,
+                                PacketType.HANDSHAKE,
+                                "Handshake timed out for ${dest.name}: ${e.message}"
+                            )
                             return@audioSocket
                         }
 
                         if (handshakeFrame !is Frame.Text) {
-                            PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "Unexpected handshake frame type from ${dest.name}")
+                            PacketLogger.log(
+                                PacketDirection.IN,
+                                PacketType.HANDSHAKE,
+                                "Unexpected handshake frame type from ${dest.name}"
+                            )
                             return@audioSocket
                         }
                     }
@@ -1429,23 +1702,25 @@ class AudioCastService : Service() {
                     updateNotification()
 
                     val delayQueue = java.util.LinkedList<ByteArray>()
-                    
+
                     audioBufferFlow.collect { buffer: ByteArray ->
                         delayQueue.add(buffer)
-                        
-                        val currentDelay = _activeDestinations.value.find { it.host == dest.host }?.delayMs ?: 0
-                        val requiredFrames = currentDelay / 20 
-                        
+
+                        val currentDelay = _activeDestinations.value.find {
+                            it.host == dest.host
+                        }?.delayMs ?: 0
+                        val requiredFrames = currentDelay / 20
+
                         var sendCount = 0
                         while (delayQueue.size > requiredFrames && sendCount < 2) {
                             val frame = delayQueue.removeFirst()
                             sendAudioFrame(this@audioSocket, frame)
                             sentFramesCount++
                             sendCount++
-                            
+
                             if (delayQueue.size == requiredFrames) break
                         }
-                        
+
                         val now = System.currentTimeMillis()
                         if (now - lastBitrateTime >= 1000) {
                             val delta = sentFramesCount - lastSentFramesForBitrate
@@ -1459,10 +1734,21 @@ class AudioCastService : Service() {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Log.e(TAG, "Audio WS connection to ${dest.host}:${dest.port} failed: ${e.message}", e)
-                PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "Audio connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}")
+                Log.e(
+                    TAG,
+                    "Audio WS connection to ${dest.host}:${dest.port} failed: ${e.message}",
+                    e
+                )
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.HANDSHAKE,
+                    "Audio connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}"
+                )
                 reconnectAttempts++
-                val delayTime = (RECONNECT_INITIAL_BACKOFF * 2.0.pow(reconnectAttempts.toDouble().coerceAtMost(5.0))).toLong()
+                val delayTime = (
+                    RECONNECT_INITIAL_BACKOFF *
+                        2.0.pow(reconnectAttempts.toDouble().coerceAtMost(5.0))
+                    ).toLong()
                 delay(delayTime)
             }
         }
@@ -1475,20 +1761,22 @@ class AudioCastService : Service() {
         } else {
             _stats.value = _stats.value.copy(droppedFrames = _stats.value.droppedFrames + 1)
             Log.w(TAG, "Audio frame send failed (dropped)")
-            PacketLogger.log(PacketDirection.OUT, PacketType.AUDIO, "Audio frame dropped (send failed)", buffer.size)
+            PacketLogger.log(
+                PacketDirection.OUT,
+                PacketType.AUDIO,
+                "Audio frame dropped (send failed)",
+                buffer.size
+            )
         }
     }
-
-
-
-
 
     fun sendVolumeCommand(direction: String) {
         scope.launch {
             // Snapshot under the map's intrinsic lock (required for safe iteration over a
             // synchronizedMap/Set view), then iterate the copy so the blocking network
             // calls below don't hold that lock and stall concurrent map access elsewhere.
-            val controlSessionsSnapshot = synchronized(controlSessions) { controlSessions.values.toList() }
+            val controlSessionsSnapshot =
+                synchronized(controlSessions) { controlSessions.values.toList() }
             controlSessionsSnapshot.forEach { session ->
                 try {
                     val command = JSONObject().apply {
@@ -1504,15 +1792,23 @@ class AudioCastService : Service() {
                 try {
                     val output = socket.getOutputStream()
                     val session = raopSessions[host] ?: ""
-                    
-                    val volStr = "volume: ${if(direction == "up") -10.0 else -30.0}\r\n"
+
+                    val volStr = "volume: ${if (direction == "up") -10.0 else -30.0}\r\n"
                     synchronized(output) {
                         val cseq = raopCSeqs[host] ?: 1
-                        sendRtspRequest(output, "SET_PARAMETER", host, socket.port, cseq, mapOf(
-                            "Session" to session,
-                            "Content-Type" to "text/parameters",
-                            "Content-Length" to volStr.length.toString()
-                        ), volStr)
+                        sendRtspRequest(
+                            output,
+                            "SET_PARAMETER",
+                            host,
+                            socket.port,
+                            cseq,
+                            mapOf(
+                                "Session" to session,
+                                "Content-Type" to "text/parameters",
+                                "Content-Length" to volStr.length.toString()
+                            ),
+                            volStr
+                        )
                         raopCSeqs[host] = cseq + 1
                     }
                 } catch (e: Exception) {}
@@ -1525,12 +1821,22 @@ class AudioCastService : Service() {
                             val (_, rcUrl) = getDlnaControlUrls(dest.extra)
                             if (rcUrl != null) adjustDlnaVolume(rcUrl, direction)
                         }
+
                         "Google Cast" -> {
                             // DIAL protocol used for Google Cast here does not support volume control.
                             // This would require implementing the full CastV2 protocol (port 8009).
                         }
+
                         "AirPlay2" -> {
-                            ap2Clients[dest.host]?.setVolume(if (direction == "up") -10.0 else -30.0)
+                            ap2Clients[dest.host]?.setVolume(
+                                if (direction ==
+                                    "up"
+                                ) {
+                                    -10.0
+                                } else {
+                                    -30.0
+                                }
+                            )
                         }
                     }
                 } catch (e: Exception) {}
@@ -1552,11 +1858,19 @@ class AudioCastService : Service() {
                     val volStr = "volume: ${String.format(Locale.US, "%.6f", dB)}\r\n"
                     synchronized(output) {
                         val cseq = raopCSeqs[host] ?: 1
-                        sendRtspRequest(output, "SET_PARAMETER", host, socket.port, cseq, mapOf(
-                            "Session" to session,
-                            "Content-Type" to "text/parameters",
-                            "Content-Length" to volStr.length.toString()
-                        ), volStr)
+                        sendRtspRequest(
+                            output,
+                            "SET_PARAMETER",
+                            host,
+                            socket.port,
+                            cseq,
+                            mapOf(
+                                "Session" to session,
+                                "Content-Type" to "text/parameters",
+                                "Content-Length" to volStr.length.toString()
+                            ),
+                            volStr
+                        )
                         raopCSeqs[host] = cseq + 1
                     }
                 } catch (_: Exception) {}
@@ -1565,17 +1879,23 @@ class AudioCastService : Service() {
             // AirPlay 2
             val ap2Snapshot = synchronized(ap2Clients) { ap2Clients.toMap() }
             ap2Snapshot.forEach { (_, client) ->
-                try { client.setVolume(dB) } catch (_: Exception) {}
+                try {
+                    client.setVolume(dB)
+                } catch (_: Exception) {}
             }
 
             // AriaCast native
             val controlSnapshot = synchronized(controlSessions) { controlSessions.values.toList() }
             controlSnapshot.forEach { session ->
                 try {
-                    session.send(Frame.Text(JSONObject().apply {
-                        put("command", "volume_set")
-                        put("level", ((dB + 30) / 30 * 100).toInt().coerceIn(0, 100))
-                    }.toString()))
+                    session.send(
+                        Frame.Text(
+                            JSONObject().apply {
+                                put("command", "volume_set")
+                                put("level", ((dB + 30) / 30 * 100).toInt().coerceIn(0, 100))
+                            }.toString()
+                        )
+                    )
                 } catch (_: Exception) {}
             }
         }
@@ -1585,17 +1905,34 @@ class AudioCastService : Service() {
         try {
             val getVolBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume></s:Body></s:Envelope>"""
             val resp = client.post(rcUrl) {
-                header("SoapAction", "\"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"")
+                header(
+                    "SoapAction",
+                    "\"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\""
+                )
                 contentType(ContentType.parse("text/xml; charset=utf-8"))
                 setBody(getVolBody)
             }
             val volText = resp.bodyAsText()
-            val currentVol = volText.substringAfter("<CurrentVolume>", "").substringBefore("</CurrentVolume>").toIntOrNull() ?: 50
-            val newVol = if (direction == "up") (currentVol + 5).coerceAtMost(100) else (currentVol - 5).coerceAtLeast(0)
-            
+            val currentVol =
+                volText.substringAfter(
+                    "<CurrentVolume>",
+                    ""
+                ).substringBefore("</CurrentVolume>").toIntOrNull()
+                    ?: 50
+            val newVol = if (direction ==
+                "up"
+            ) {
+                (currentVol + 5).coerceAtMost(100)
+            } else {
+                (currentVol - 5).coerceAtLeast(0)
+            }
+
             val setVolBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>$newVol</DesiredVolume></u:SetVolume></s:Body></s:Envelope>"""
             client.post(rcUrl) {
-                header("SoapAction", "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"")
+                header(
+                    "SoapAction",
+                    "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\""
+                )
                 contentType(ContentType.parse("text/xml; charset=utf-8"))
                 setBody(setVolBody)
             }
@@ -1614,11 +1951,13 @@ class AudioCastService : Service() {
     fun getActiveDestinationsJson(): String {
         val array = JSONArray()
         _activeDestinations.value.forEach { dest ->
-            array.put(JSONObject().apply {
-                put("name", dest.name)
-                put("host", dest.host)
-                put("delayMs", dest.delayMs)
-            })
+            array.put(
+                JSONObject().apply {
+                    put("name", dest.name)
+                    put("host", dest.host)
+                    put("delayMs", dest.delayMs)
+                }
+            )
         }
         return array.toString()
     }
@@ -1654,12 +1993,14 @@ class AudioCastService : Service() {
             }
         }
 
-
         val metadataKey = "${finalMetadata.title}-${finalMetadata.artist}"
 
         destinations.forEach { dest ->
             try {
-                if (dest.platform != "DLNA" && dest.platform != "Google Cast" && dest.platform != "AirPlay" && dest.platform != "AirPlay2") {
+                if (dest.platform != "DLNA" && dest.platform != "Google Cast" &&
+                    dest.platform != "AirPlay" &&
+                    dest.platform != "AirPlay2"
+                ) {
                     client.post {
                         url {
                             protocol = URLProtocol.HTTP
@@ -1671,20 +2012,33 @@ class AudioCastService : Service() {
                         setBody(mapOf("data" to finalMetadata))
                         timeout { requestTimeoutMillis = 5000 }
                     }
-                    PacketLogger.log(PacketDirection.OUT, PacketType.METADATA, "Metadata sent to ${dest.name}")
+                    PacketLogger.log(
+                        PacketDirection.OUT,
+                        PacketType.METADATA,
+                        "Metadata sent to ${dest.name}"
+                    )
                 } else if (dest.platform == "AirPlay") {
                     updateRaopMetadata(dest.host, finalMetadata)
                     if (dest.port != 5000) updateAirPlay2Metadata(dest.host, finalMetadata)
                 } else if (dest.platform == "AirPlay2") {
                     val ap2 = ap2Clients[dest.host]
                     if (ap2 != null) {
-                        ap2.sendMetadata(finalMetadata.title, finalMetadata.artist, finalMetadata.album, currentArtworkBytes)
+                        ap2.sendMetadata(
+                            finalMetadata.title,
+                            finalMetadata.artist,
+                            finalMetadata.album,
+                            currentArtworkBytes
+                        )
                         val duration = finalMetadata.durationMs
                         val position = finalMetadata.positionMs
                         if (duration != null && position != null) {
                             ap2.sendProgress(position, duration)
                         }
-                        PacketLogger.log(PacketDirection.OUT, PacketType.METADATA, "Metadata sent to ${dest.name} (AirPlay 2)")
+                        PacketLogger.log(
+                            PacketDirection.OUT,
+                            PacketType.METADATA,
+                            "Metadata sent to ${dest.name} (AirPlay 2)"
+                        )
                     }
                 } else if (dest.platform == "DLNA") {
                     if (lastSentMetadata[dest.host] != metadataKey) {
@@ -1705,9 +2059,16 @@ class AudioCastService : Service() {
         val metadataXml = createDidlMetadata(streamUrl, metadata)
 
         try {
-            val body = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(streamUrl)}</CurrentURI><CurrentURIMetaData>${escapeXml(metadataXml)}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
+            val body = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(
+                streamUrl
+            )}</CurrentURI><CurrentURIMetaData>${escapeXml(
+                metadataXml
+            )}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
             client.post(avUrl) {
-                header("SoapAction", "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
+                header(
+                    "SoapAction",
+                    "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\""
+                )
                 contentType(ContentType.parse("text/xml; charset=utf-8"))
                 setBody(body)
             }
@@ -1735,11 +2096,18 @@ class AudioCastService : Service() {
         try {
             synchronized(output) {
                 val cseq = raopCSeqs[host] ?: 1
-                sendRtspRequest(output, "SET_PARAMETER", host, socket.port, cseq, mapOf(
-                    "Session" to session,
-                    "Content-Type" to "application/x-dmap-tagged",
-                    "Content-Length" to dmap.size.toString()
-                ))
+                sendRtspRequest(
+                    output,
+                    "SET_PARAMETER",
+                    host,
+                    socket.port,
+                    cseq,
+                    mapOf(
+                        "Session" to session,
+                        "Content-Type" to "application/x-dmap-tagged",
+                        "Content-Length" to dmap.size.toString()
+                    )
+                )
                 output.write(dmap)
                 output.flush()
                 raopCSeqs[host] = cseq + 1
@@ -1751,7 +2119,7 @@ class AudioCastService : Service() {
         if (unsupportedSetProperty.contains(host)) return
         val sessionId = airplaySessionIds[host] ?: return
         val targetPort = 7000
-        
+
         // Use DMAP-tagged metadata as seen in pyatv
         val dmapData = encodeDmapMetadata(metadata)
         val mlitContainer = ByteArrayOutputStream().apply {
@@ -1797,7 +2165,7 @@ class AudioCastService : Service() {
 
     private fun encodeDmapMetadata(metadata: TrackMetadata): ByteArray {
         val out = ByteArrayOutputStream()
-        
+
         fun writeTag(tag: String, value: String?) {
             if (value == null) return
             val valBytes = value.toByteArray(Charsets.UTF_8)
@@ -1820,18 +2188,30 @@ class AudioCastService : Service() {
         val album = metadata?.album ?: ""
         val artwork = metadata?.artworkUrl ?: ""
 
-        val artworkTag = if (artwork.isNotEmpty()) "<upnp:albumArtURI>${escapeXml(artwork)}</upnp:albumArtURI>" else ""
-        
-        return """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>${escapeXml(title)}</dc:title><upnp:artist>${escapeXml(artist)}</upnp:artist><upnp:album>${escapeXml(album)}</upnp:album><upnp:class>object.item.audioItem.musicTrack</upnp:class>$artworkTag<res protocolInfo="http-get:*:audio/x-wav:*">${escapeXml(streamUrl)}</res></item></DIDL-Lite>"""
+        val artworkTag = if (artwork.isNotEmpty()) {
+            "<upnp:albumArtURI>${escapeXml(
+                artwork
+            )}</upnp:albumArtURI>"
+        } else {
+            ""
+        }
+
+        return """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>${escapeXml(
+            title
+        )}</dc:title><upnp:artist>${escapeXml(
+            artist
+        )}</upnp:artist><upnp:album>${escapeXml(
+            album
+        )}</upnp:album><upnp:class>object.item.audioItem.musicTrack</upnp:class>$artworkTag<res protocolInfo="http-get:*:audio/x-wav:*">${escapeXml(
+            streamUrl
+        )}</res></item></DIDL-Lite>"""
     }
 
-    private fun escapeXml(str: String): String {
-        return str.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&apos;")
-    }
+    private fun escapeXml(str: String): String = str.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
 
     private fun getLocalIpAddress(): String? {
         try {
@@ -1840,9 +2220,13 @@ class AudioCastService : Service() {
             while (interfaces.hasMoreElements()) {
                 val networkInterface = interfaces.nextElement()
                 if (networkInterface.isLoopback || !networkInterface.isUp) continue
-                
+
                 val name = networkInterface.name.lowercase()
-                if (name.contains("tun") || name.contains("ppp") || name.contains("tap") || name.contains("docker")) continue
+                if (name.contains("tun") || name.contains("ppp") || name.contains("tap") ||
+                    name.contains("docker")
+                ) {
+                    continue
+                }
 
                 val addresses = networkInterface.inetAddresses
                 while (addresses.hasMoreElements()) {
@@ -1865,14 +2249,20 @@ class AudioCastService : Service() {
             try {
                 client.webSocket(host = dest.host, port = dest.port, path = "/control") {
                     controlSessions[dest.host] = this
-                    PacketLogger.log(PacketDirection.OUT, PacketType.CONTROL, "Control socket connected to ${dest.name}")
+                    PacketLogger.log(
+                        PacketDirection.OUT,
+                        PacketType.CONTROL,
+                        "Control socket connected to ${dest.name}"
+                    )
                     for (frame in incoming) {
                         if (frame is Frame.Text) {
                             val text = frame.readText()
                             try {
                                 val json = JSONObject(text)
                                 val action = json.getString("action")
-                                val command = MediaCommand.entries.find { it.name.equals(action, ignoreCase = true) }
+                                val command = MediaCommand.entries.find {
+                                    it.name.equals(action, ignoreCase = true)
+                                }
                                 if (command != null) {
                                     _controlCommands.emit(command)
                                 }
@@ -1882,8 +2272,16 @@ class AudioCastService : Service() {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Log.e(TAG, "Control WS connection to ${dest.host}:${dest.port} failed: ${e.message}", e)
-                PacketLogger.log(PacketDirection.IN, PacketType.CONTROL, "Control connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}")
+                Log.e(
+                    TAG,
+                    "Control WS connection to ${dest.host}:${dest.port} failed: ${e.message}",
+                    e
+                )
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.CONTROL,
+                    "Control connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}"
+                )
                 controlSessions.remove(dest.host)
                 delay(RECONNECT_INITIAL_BACKOFF)
             }
@@ -1894,8 +2292,12 @@ class AudioCastService : Service() {
         while (currentCoroutineContext().isActive) {
             try {
                 client.webSocket(host = dest.host, port = dest.port, path = "/stats") statsSocket@{
-                    PacketLogger.log(PacketDirection.OUT, PacketType.STATS, "Stats socket connected to ${dest.name}")
-                    while(isActive) {
+                    PacketLogger.log(
+                        PacketDirection.OUT,
+                        PacketType.STATS,
+                        "Stats socket connected to ${dest.name}"
+                    )
+                    while (isActive) {
                         val frame = withTimeoutOrNull(STATS_TIMEOUT) { incoming.receive() }
                         if (frame is Frame.Text) {
                             val json = JSONObject(frame.readText())
@@ -1911,8 +2313,16 @@ class AudioCastService : Service() {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                Log.e(TAG, "Stats WS connection to ${dest.host}:${dest.port} failed: ${e.message}", e)
-                PacketLogger.log(PacketDirection.IN, PacketType.STATS, "Stats connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}")
+                Log.e(
+                    TAG,
+                    "Stats WS connection to ${dest.host}:${dest.port} failed: ${e.message}",
+                    e
+                )
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.STATS,
+                    "Stats connection to ${dest.name} failed: ${e.message ?: e.javaClass.simpleName}"
+                )
                 delay(RECONNECT_INITIAL_BACKOFF)
             }
         }
@@ -1958,7 +2368,7 @@ class AudioCastService : Service() {
         if (currentVolume == 0) {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
         }
-        
+
         try {
             audioRecord?.stop()
             audioRecord?.release()
@@ -1971,17 +2381,19 @@ class AudioCastService : Service() {
         } catch (e: Exception) {}
         mediaProjection = null
 
-        
         dlnaHttpServerJob?.cancel()
         dlnaHttpServerJob = null
         artworkServerJob?.cancel()
         artworkServerJob = null
-        
-        try { streamServerSocket?.close() } catch (e: Exception) {}
-        streamServerSocket = null
-        try { artworkServerSocket?.close() } catch (e: Exception) {}
-        artworkServerSocket = null
 
+        try {
+            streamServerSocket?.close()
+        } catch (e: Exception) {}
+        streamServerSocket = null
+        try {
+            artworkServerSocket?.close()
+        } catch (e: Exception) {}
+        artworkServerSocket = null
 
         controlSessions.clear()
         // Close the sockets only after giving the TEARDOWN/stop sends launched by
@@ -1998,8 +2410,16 @@ class AudioCastService : Service() {
         ap2Clients.clear()
         scope.launch(Dispatchers.IO) {
             withTimeoutOrNull(2000) { teardownJobs.joinAll() }
-            raopSocketsSnapshot.forEach { try { it.close() } catch (e: Exception) {} }
-            ap2ClientsSnapshot.forEach { try { it.close() } catch (e: Exception) {} }
+            raopSocketsSnapshot.forEach {
+                try {
+                    it.close()
+                } catch (e: Exception) {}
+            }
+            ap2ClientsSnapshot.forEach {
+                try {
+                    it.close()
+                } catch (e: Exception) {}
+            }
         }
         _activeDestinations.value = emptyList()
         sessionJob?.cancel()
@@ -2035,19 +2455,25 @@ class AudioCastService : Service() {
         val dest = _activeDestinations.value.firstOrNull()
         val session = MediaSession(this, "CreoleCast")
 
-        session.setMetadata(MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, dest?.name ?: "AirPlay")
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "CreoleCast")
-            .build())
+        session.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, dest?.name ?: "AirPlay")
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, "CreoleCast")
+                .build()
+        )
 
-        session.setPlaybackState(PlaybackState.Builder()
-            .setState(PlaybackState.STATE_PLAYING, 0, 1f)
-            .build())
+        session.setPlaybackState(
+            PlaybackState.Builder()
+                .setState(PlaybackState.STATE_PLAYING, 0, 1f)
+                .build()
+        )
 
         session.setCallback(object : MediaSession.Callback() {})
 
         session.setPlaybackToRemote(object : VolumeProvider(
-            VOLUME_CONTROL_ABSOLUTE, MAX_VOLUME_STEPS, receiverVolumeSteps
+            VOLUME_CONTROL_ABSOLUTE,
+            MAX_VOLUME_STEPS,
+            receiverVolumeSteps
         ) {
             override fun onSetVolumeTo(volume: Int) {
                 receiverVolumeSteps = volume
@@ -2082,19 +2508,25 @@ class AudioCastService : Service() {
                         "AirPlay2" -> {
                             ap2Clients[dest.host]?.teardown()
                         }
+
                         "DLNA" -> {
                             val (controlUrl, _) = getDlnaControlUrls(dest.extra)
                             if (controlUrl == null) return@launch
                             val stopBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:Stop xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:Stop></s:Body></s:Envelope>"""
                             client.post(controlUrl) {
-                                header("SoapAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"")
+                                header(
+                                    "SoapAction",
+                                    "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\""
+                                )
                                 contentType(ContentType.parse("text/xml; charset=utf-8"))
                                 setBody(stopBody)
                             }
                         }
+
                         "Google Cast" -> {
                             client.delete("http://${dest.host}:8008/apps/DefaultMediaPlayer")
                         }
+
                         "AirPlay" -> {
                             if (dest.port == 5000 || dest.name.contains("@")) {
                                 val socket = raopSockets[dest.host]
@@ -2102,18 +2534,30 @@ class AudioCastService : Service() {
                                 if (output != null) {
                                     synchronized(output) {
                                         val cseq = raopCSeqs[dest.host] ?: 1
-                                        sendRtspRequest(output, "TEARDOWN", dest.host, dest.port, cseq, mapOf(
-                                            "Session" to (raopSessions[dest.host] ?: ""),
-                                            "User-Agent" to "AirPlay/366.0"
-                                        ))
+                                        sendRtspRequest(
+                                            output,
+                                            "TEARDOWN",
+                                            dest.host,
+                                            dest.port,
+                                            cseq,
+                                            mapOf(
+                                                "Session" to (raopSessions[dest.host] ?: ""),
+                                                "User-Agent" to "AirPlay/366.0"
+                                            )
+                                        )
                                     }
                                 }
                             } else {
                                 val sessionId = airplaySessionIds[dest.host]
                                 if (sessionId != null) {
-                                    client.post("http://${dest.host}:${if(dest.port > 0) dest.port else 7000}/stop") {
+                                    client.post(
+                                        "http://${dest.host}:${if (dest.port > 0) dest.port else 7000}/stop"
+                                    ) {
                                         header("X-Apple-Session-ID", sessionId)
-                                        header("X-Apple-Device-ID", "0x${airplayDeviceId.replace(":", "").lowercase()}")
+                                        header(
+                                            "X-Apple-Device-ID",
+                                            "0x${airplayDeviceId.replace(":", "").lowercase()}"
+                                        )
                                         header("User-Agent", "AirPlay/366.0")
                                     }
                                 }
@@ -2131,7 +2575,12 @@ class AudioCastService : Service() {
     }
 
     private fun createNotification(): android.app.Notification {
-        val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW)
+        val channel =
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                getString(R.string.app_name),
+                NotificationManager.IMPORTANCE_LOW
+            )
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.createNotificationChannel(channel)
 
@@ -2139,32 +2588,68 @@ class AudioCastService : Service() {
         remoteViews.setTextViewText(R.id.notification_title, getString(R.string.app_name))
 
         val destinations = _activeDestinations.value
-        val statusText = when(state.value) {
+        val statusText = when (state.value) {
             CastState.CASTING -> {
-                if (destinations.size > 1) "Casting to ${destinations.size} devices"
-                else getString(R.string.casting_to, destinations.firstOrNull()?.name ?: "Unknown", "")
+                if (destinations.size > 1) {
+                    "Casting to ${destinations.size} devices"
+                } else {
+                    getString(
+                        R.string.casting_to,
+                        destinations.firstOrNull()?.name ?: "Unknown",
+                        ""
+                    )
+                }
             }
+
             CastState.CONNECTING -> "Connecting..."
+
             CastState.ERROR -> "Connection Error"
+
             else -> getString(R.string.not_casting)
         }
         remoteViews.setTextViewText(R.id.notification_text, statusText)
 
         // Stop button
         val stopIntent = Intent(this, AudioCastService::class.java).apply { action = ACTION_STOP }
-        val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE)
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            0,
+            stopIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
         remoteViews.setOnClickPendingIntent(R.id.notification_stop_button, stopPendingIntent)
 
         // Volume controls
-        val volUpIntent = Intent(this, AudioCastService::class.java).apply { action = ACTION_VOLUME_UP }
-        val volUpPending = PendingIntent.getService(this, 1, volUpIntent, PendingIntent.FLAG_IMMUTABLE)
+        val volUpIntent = Intent(this, AudioCastService::class.java).apply {
+            action =
+                ACTION_VOLUME_UP
+        }
+        val volUpPending = PendingIntent.getService(
+            this,
+            1,
+            volUpIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
         remoteViews.setOnClickPendingIntent(R.id.notification_vol_up, volUpPending)
 
-        val volDownIntent = Intent(this, AudioCastService::class.java).apply { action = ACTION_VOLUME_DOWN }
-        val volDownPending = PendingIntent.getService(this, 2, volDownIntent, PendingIntent.FLAG_IMMUTABLE)
+        val volDownIntent = Intent(this, AudioCastService::class.java).apply {
+            action =
+                ACTION_VOLUME_DOWN
+        }
+        val volDownPending = PendingIntent.getService(
+            this,
+            2,
+            volDownIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
         remoteViews.setOnClickPendingIntent(R.id.notification_vol_down, volDownPending)
 
-        remoteViews.setProgressBar(R.id.notification_volume_bar, MAX_VOLUME_STEPS, receiverVolumeSteps, false)
+        remoteViews.setProgressBar(
+            R.id.notification_volume_bar,
+            MAX_VOLUME_STEPS,
+            receiverVolumeSteps,
+            false
+        )
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile_icon)
@@ -2204,6 +2689,7 @@ class AudioCastService : Service() {
         const val EXTRA_SERVER_EXTRA = "com.creolecast.app.EXTRA_SERVER_EXTRA"
 
         const val PREFS_NAME = "CreoleCastPrefs"
+
         // AirPlay 2 pairing PINs live in a separate prefs file, excluded from Android
         // backup/device-transfer (see data_extraction_rules.xml / backup_rules.xml) -
         // they shouldn't end up in a cloud backup or a new device's transfer alongside
@@ -2217,12 +2703,11 @@ class AudioCastService : Service() {
         const val SAMPLE_RATE = 48000
         const val FRAME_SIZE = 3840
         const val LATENCY = 66150
-        private const val AP2_ALAC_FRAME_SIZE = 352  // ALAC frame size in samples for AirPlay 2
+        private const val AP2_ALAC_FRAME_SIZE = 352 // ALAC frame size in samples for AirPlay 2
         private const val MAX_VOLUME_STEPS = 30
-        
 
         private const val RECONNECT_INITIAL_BACKOFF = 1000L
-        private const val STATS_TIMEOUT = 10000L 
+        private const val STATS_TIMEOUT = 10000L
         private const val ARTWORK_PORT = 8090
         private const val STREAM_PORT = 8091
 
@@ -2238,6 +2723,7 @@ class AudioCastService : Service() {
         internal fun captureSampleRate(platform: String?): Int =
             if (platform == "AirPlay" || platform == "AirPlay2") 44100 else SAMPLE_RATE
     }
+
     /** Encode little-endian PCM into an ALAC uncompressed frame.
      *  Writes the 23-bit ALAC header, byte-swaps each stereo sample pair
      *  to big-endian, and appends the 3-bit end tag. */
@@ -2252,7 +2738,12 @@ class AudioCastService : Service() {
             if (rb >= 0) {
                 val bd = (v shl rb) and 0xFF
                 out[p] = if (bpos == 0) bd.toByte() else (out[p].toInt() or bd).toByte()
-                if (rb == 0) { p++; bpos = 0 } else bpos += blen
+                if (rb == 0) {
+                    p++
+                    bpos = 0
+                } else {
+                    bpos += blen
+                }
             } else {
                 out[p] = (out[p].toInt() or ((v ushr (-rb)) and 0xFF)).toByte()
                 p++
@@ -2263,21 +2754,25 @@ class AudioCastService : Service() {
 
         // ALAC uncompressed frame header: 3 bits tag(1) + 4 bits unused + 8 bits unused
         //                                 + 4 bits unused + 1 bit "has size" + 2 bits unused + 1 bit "not compressed"
-        writeBits(1, 3); writeBits(0, 4); writeBits(0, 8)
-        writeBits(0, 4); writeBits(0, 1); writeBits(0, 2); writeBits(1, 1)
+        writeBits(1, 3)
+        writeBits(0, 4)
+        writeBits(0, 8)
+        writeBits(0, 4)
+        writeBits(0, 1)
+        writeBits(0, 2)
+        writeBits(1, 1)
 
         // Byte-swap little-endian stereo samples to big-endian
         var i = 0
         while (i < pcm.size) {
-            writeBits(pcm[i + 1].toInt() and 0xFF, 8)  // L high
-            writeBits(pcm[i + 0].toInt() and 0xFF, 8)  // L low
-            writeBits(pcm[i + 3].toInt() and 0xFF, 8)  // R high
-            writeBits(pcm[i + 2].toInt() and 0xFF, 8)  // R low
+            writeBits(pcm[i + 1].toInt() and 0xFF, 8) // L high
+            writeBits(pcm[i + 0].toInt() and 0xFF, 8) // L low
+            writeBits(pcm[i + 3].toInt() and 0xFF, 8) // R high
+            writeBits(pcm[i + 2].toInt() and 0xFF, 8) // R low
             i += 4
         }
         // End tag
         writeBits(7, 3)
         return out
     }
-
 }

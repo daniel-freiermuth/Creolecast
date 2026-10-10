@@ -115,9 +115,9 @@ class AirPlay2Client(
 
     /** PTP timeline our 0xd7 sync packets are stamped on. */
     private val mediaClock = MediaClock()
+
     /** Running only when the receiver follows our clock instead of publishing one. */
     private var ptpMaster: PtpMaster? = null
-
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
     private var channelEncrypted = false
@@ -156,7 +156,10 @@ class AirPlay2Client(
                 hasFeature(FEATURE_PTP) &&
                 supportsPtpSourceVersion(receiverSourceVersion)
             useStreamConnections = hasFeature(FEATURE_STREAM_CONNECTIONS)
-            Log.d(TAG, "Negotiated timing=${if (usePtp) "PTP" else "NTP"} streamConnections=$useStreamConnections")
+            Log.d(
+                TAG,
+                "Negotiated timing=${if (usePtp) "PTP" else "NTP"} streamConnections=$useStreamConnections"
+            )
 
             if (hasFeature(FEATURE_FPSAP) && !doFairPlaySetup()) return false
 
@@ -240,7 +243,10 @@ class AirPlay2Client(
         try {
             pairType = HKP_SCREEN_CAPTURE
             val resp = sendRequest(
-                "POST", "/pair-pin-start", null, null,
+                "POST",
+                "/pair-pin-start",
+                null,
+                null,
                 listOf(
                     "X-Apple-HKP" to pairType.toString(),
                     "X-Apple-SupportedPINLengths" to "4"
@@ -257,7 +263,9 @@ class AirPlay2Client(
      * HAP framing state, since the keys belong to the old session.
      */
     private fun openControlConnection() {
-        try { socket.close() } catch (_: Exception) {}
+        try {
+            socket.close()
+        } catch (_: Exception) {}
         channelEncrypted = false
         hapWriteKey = null
         hapReadKey = null
@@ -281,19 +289,24 @@ class AirPlay2Client(
         if (deviceEd25519PubKey == null) {
             deviceEd25519PubKey = when (val pkRaw = info["pk"]) {
                 is ByteArray -> pkRaw
+
                 is String -> try {
                     android.util.Base64.decode(pkRaw, android.util.Base64.NO_WRAP)
                 } catch (e: IllegalArgumentException) {
                     null
                 }
+
                 else -> null
             }
         }
         receiverFeatures = parseFeatures(info["features"])
         receiverSourceVersion = info["sourceVersion"] as? String ?: ""
-        Log.d(TAG, "Receiver $receiverDeviceId flags=$lastStatusFlags " +
-            "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
-            "hasPk=${deviceEd25519PubKey != null}")
+        Log.d(
+            TAG,
+            "Receiver $receiverDeviceId flags=$lastStatusFlags " +
+                "features=0x${receiverFeatures.toString(16)} src=$receiverSourceVersion " +
+                "hasPk=${deviceEd25519PubKey != null}"
+        )
         return true
     }
 
@@ -334,9 +347,13 @@ class AirPlay2Client(
 
             val m3 = srp.processM2(m2) ?: continue
             val resp2 = sendPairingRequest("/pair-setup", m3)
-            if (resp2.code != 200) { Log.e(TAG, "pair-setup M3 failed: ${resp2.code}"); continue }
+            if (resp2.code != 200) {
+                Log.e(TAG, "pair-setup M3 failed: ${resp2.code}")
+                continue
+            }
             if (!srp.verifyM4(resp2.body ?: continue)) {
-                Log.e(TAG, "pair-setup M4 verification failed"); continue
+                Log.e(TAG, "pair-setup M4 verification failed")
+                continue
             }
 
             if (transient) {
@@ -346,11 +363,16 @@ class AirPlay2Client(
             }
 
             val creds = credentials ?: return false
-            val m5 = srp.buildM5(creds, includeScreenCaptureAcl = type == HKP_SCREEN_CAPTURE) ?: continue
+            val m5 =
+                srp.buildM5(creds, includeScreenCaptureAcl = type == HKP_SCREEN_CAPTURE) ?: continue
             val resp3 = sendPairingRequest("/pair-setup", m5)
-            if (resp3.code != 200) { Log.e(TAG, "pair-setup M5 failed: ${resp3.code}"); continue }
+            if (resp3.code != 200) {
+                Log.e(TAG, "pair-setup M5 failed: ${resp3.code}")
+                continue
+            }
             if (!srp.verifyM6(resp3.body ?: continue)) {
-                Log.e(TAG, "pair-setup M6 reported an error"); continue
+                Log.e(TAG, "pair-setup M6 reported an error")
+                continue
             }
 
             Log.d(TAG, "Pair-setup complete (hkp=$type)")
@@ -375,18 +397,23 @@ class AirPlay2Client(
             TlvUtil.TLV_PUBLIC_KEY to clientPub
         )
         val resp1 = sendPairingRequest("/pair-verify", m1, verify = true)
-        if (resp1.code != 200) { Log.e(TAG, "pair-verify M1 failed: ${resp1.code}"); return false }
+        if (resp1.code != 200) {
+            Log.e(TAG, "pair-verify M1 failed: ${resp1.code}")
+            return false
+        }
 
         val parsed1 = TlvUtil.parse(resp1.body ?: return false)
         if (parsed1[TlvUtil.TLV_ERROR]?.firstOrNull() != null) {
-            Log.e(TAG, "pair-verify M2 error"); return false
+            Log.e(TAG, "pair-verify M2 error")
+            return false
         }
         val serverPubKey = parsed1[TlvUtil.TLV_PUBLIC_KEY]?.firstOrNull() ?: return false
         val encryptedData = parsed1[TlvUtil.TLV_ENCRYPTED_DATA]?.firstOrNull() ?: return false
         if (encryptedData.size < 16) return false
 
         val shared = AirPlay2Crypto.curve25519Agree(
-            keyPair.private as org.bouncycastle.crypto.params.X25519PrivateKeyParameters, serverPubKey
+            keyPair.private as org.bouncycastle.crypto.params.X25519PrivateKeyParameters,
+            serverPubKey
         )
 
         val verifyKey = AirPlay2Crypto.hkdfSha512(
@@ -402,7 +429,13 @@ class AirPlay2Client(
         val tag = encryptedData.copyOfRange(encryptedData.size - 16, encryptedData.size)
 
         val decrypted = try {
-            AirPlay2Crypto.chacha20Poly1305Decrypt(verifyKey, m2Nonce, ciphertext, ByteArray(0), tag)
+            AirPlay2Crypto.chacha20Poly1305Decrypt(
+                verifyKey,
+                m2Nonce,
+                ciphertext,
+                ByteArray(0),
+                tag
+            )
         } catch (e: Exception) {
             // A tag mismatch means the peer did not derive the same shared
             // secret, so the exchange is already unauthenticated — fail hard.
@@ -419,7 +452,8 @@ class AirPlay2Client(
             val serverId = inner[TlvUtil.TLV_IDENTIFIER]?.firstOrNull()
             val serverSig = inner[TlvUtil.TLV_SIGNATURE]?.firstOrNull()
             if (serverId == null || serverSig == null) {
-                Log.e(TAG, "pair-verify M2 missing identifier/signature"); return false
+                Log.e(TAG, "pair-verify M2 missing identifier/signature")
+                return false
             }
             val signed = serverPubKey + serverId + clientPub
             if (!AirPlay2Crypto.ed25519Verify(serverLtpk, signed, serverSig)) {
@@ -438,17 +472,28 @@ class AirPlay2Client(
         )
         val m3Nonce = ByteArray(12)
         System.arraycopy("PV-Msg03".toByteArray(Charsets.UTF_8), 0, m3Nonce, 4, 8)
-        val (m3Ct, m3Tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(verifyKey, m3Nonce, m3Inner, ByteArray(0))
+        val (m3Ct, m3Tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
+            verifyKey,
+            m3Nonce,
+            m3Inner,
+            ByteArray(0)
+        )
 
         val m3 = TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(3),
             TlvUtil.TLV_ENCRYPTED_DATA to (m3Ct + m3Tag)
         )
         val resp3 = sendPairingRequest("/pair-verify", m3, verify = true)
-        if (resp3.code != 200) { Log.e(TAG, "pair-verify M3 failed: ${resp3.code}"); return false }
+        if (resp3.code != 200) {
+            Log.e(TAG, "pair-verify M3 failed: ${resp3.code}")
+            return false
+        }
         resp3.body?.let { body ->
-            if (body.isNotEmpty() && TlvUtil.parse(body)[TlvUtil.TLV_ERROR]?.firstOrNull() != null) {
-                Log.e(TAG, "pair-verify M4 error"); return false
+            if (body.isNotEmpty() &&
+                TlvUtil.parse(body)[TlvUtil.TLV_ERROR]?.firstOrNull() != null
+            ) {
+                Log.e(TAG, "pair-verify M4 error")
+                return false
             }
         }
 
@@ -461,10 +506,16 @@ class AirPlay2Client(
     private fun enableControlEncryption(sharedSecret: ByteArray) {
         val controlSalt = "Control-Salt".toByteArray(Charsets.UTF_8)
         hapWriteKey = AirPlay2Crypto.hkdfSha512(
-            controlSalt, sharedSecret, "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+            controlSalt,
+            sharedSecret,
+            "Control-Write-Encryption-Key".toByteArray(Charsets.UTF_8),
+            32
         )
         hapReadKey = AirPlay2Crypto.hkdfSha512(
-            controlSalt, sharedSecret, "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8), 32
+            controlSalt,
+            sharedSecret,
+            "Control-Read-Encryption-Key".toByteArray(Charsets.UTF_8),
+            32
         )
         hapWriteNonce = 0
         hapReadNonce = 0
@@ -519,15 +570,28 @@ class AirPlay2Client(
         return try {
             val session = FairPlaySapSession(secureRandom)
             val header = listOf("X-Apple-ET" to "32")
-            val r1 = sendRequest("POST", "/fp-setup", "application/octet-stream", session.message1(), header)
+            val r1 =
+                sendRequest(
+                    "POST",
+                    "/fp-setup",
+                    "application/octet-stream",
+                    session.message1(),
+                    header
+                )
             if (r1.code == 404) {
                 Log.w(TAG, "/fp-setup not implemented despite the FPSAP feature bit; continuing")
                 return true
             }
-            if (r1.code != 200) { Log.e(TAG, "fp-setup m1 failed: ${r1.code}"); return false }
+            if (r1.code != 200) {
+                Log.e(TAG, "fp-setup m1 failed: ${r1.code}")
+                return false
+            }
             val m3 = session.exchangeM3(r1.body ?: return false)
             val r2 = sendRequest("POST", "/fp-setup", "application/octet-stream", m3, header)
-            if (r2.code != 200) { Log.e(TAG, "fp-setup m3 failed: ${r2.code}"); return false }
+            if (r2.code != 200) {
+                Log.e(TAG, "fp-setup m3 failed: ${r2.code}")
+                return false
+            }
             session.finish(r2.body ?: return false)
 
             Log.d(TAG, "FairPlay SAP handshake complete")
@@ -554,10 +618,20 @@ class AirPlay2Client(
 
     private fun parseXmlPlist(xml: String): Map<String, Any?> {
         val result = mutableMapOf<String, Any?>()
-        val statusRegex = Regex("<key>statusFlags</key>\\s*<integer>(\\d+)</integer>", RegexOption.DOT_MATCHES_ALL)
-        val pkRegex = Regex("<key>pk</key>\\s*<data>\\s*([A-Za-z0-9+/=]+)\\s*</data>", RegexOption.DOT_MATCHES_ALL)
-        val deviceRegex = Regex("<key>deviceID</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
-        val nameRegex = Regex("<key>name</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
+        val statusRegex =
+            Regex(
+                "<key>statusFlags</key>\\s*<integer>(\\d+)</integer>",
+                RegexOption.DOT_MATCHES_ALL
+            )
+        val pkRegex =
+            Regex(
+                "<key>pk</key>\\s*<data>\\s*([A-Za-z0-9+/=]+)\\s*</data>",
+                RegexOption.DOT_MATCHES_ALL
+            )
+        val deviceRegex =
+            Regex("<key>deviceID</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
+        val nameRegex =
+            Regex("<key>name</key>\\s*<string>([^<]*)</string>", RegexOption.DOT_MATCHES_ALL)
         statusRegex.find(xml)?.let { result["statusFlags"] = it.groupValues[1].toLong() }
         pkRegex.find(xml)?.let { result["pk"] = it.groupValues[1].replace(Regex("\\s+"), "") }
         deviceRegex.find(xml)?.let { result["deviceID"] = it.groupValues[1] }
@@ -580,7 +654,10 @@ class AirPlay2Client(
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
         val receivedAt = System.nanoTime()
-        if (resp.code != 200) { Log.e(TAG, "SETUP session failed: ${resp.code}"); return false }
+        if (resp.code != 200) {
+            Log.e(TAG, "SETUP session failed: ${resp.code}")
+            return false
+        }
         sessionId = resp.headers["Session"]?.substringBefore(";")?.trim()
             ?: sessionUuid.toString().uppercase()
         val clockId = resp.body?.let { parseSessionResponse(it) } ?: 0L
@@ -592,10 +669,19 @@ class AirPlay2Client(
      * their clock headers (mirror.go configurePTPClock). Receivers that don't
      * (shairport-sync + nqptp) follow the sender, so become the PTP master.
      */
-    private fun configurePtpClock(clockId: Long, headers: Map<String, String>, receivedAt: Long): Boolean {
+    private fun configurePtpClock(
+        clockId: Long,
+        headers: Map<String, String>,
+        receivedAt: Long
+    ): Boolean {
         if (clockId != 0L) {
             if (!mediaClock.configureFromSetup(clockId, headers, receivedAt)) {
-                Log.d(TAG, "SETUP lacks receiver clock headers; local clock on timeline 0x${clockId.toULong().toString(16)}")
+                Log.d(
+                    TAG,
+                    "SETUP lacks receiver clock headers; local clock on timeline 0x${clockId.toULong().toString(
+                        16
+                    )}"
+                )
                 mediaClock.configureFromLocalClock(clockId)
             }
             return true
@@ -604,7 +690,10 @@ class AirPlay2Client(
         try {
             master.start()
         } catch (e: Exception) {
-            Log.e(TAG, "Receiver needs a sender PTP clock but UDP 319/320 cannot be bound: ${e.message}")
+            Log.e(
+                TAG,
+                "Receiver needs a sender PTP clock but UDP 319/320 cannot be bound: ${e.message}"
+            )
             return false
         }
         ptpMaster = master
@@ -614,7 +703,10 @@ class AirPlay2Client(
 
     private fun sendRecord(): Boolean {
         val resp = sendRtspRequest(
-            "RECORD", sessionUrl, null, null,
+            "RECORD",
+            sessionUrl,
+            null,
+            null,
             extraHeaders = listOf("Range" to "npt=0-", "RTP-Info" to "seq=0;rtptime=0")
         )
         Log.d(TAG, "RECORD response: code=${resp.code}")
@@ -640,7 +732,10 @@ class AirPlay2Client(
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
         if (ptpMaster == null) mediaClock.reanchor(resp.headers, System.nanoTime())
-        if (resp.code != 200) { Log.e(TAG, "SETUP stream failed: ${resp.code}"); return false }
+        if (resp.code != 200) {
+            Log.e(TAG, "SETUP stream failed: ${resp.code}")
+            return false
+        }
 
         resp.body?.let { body ->
             try {
@@ -648,13 +743,31 @@ class AirPlay2Client(
                 val streams = dict["streams"]
                 if (streams is List<*> && streams.isNotEmpty()) {
                     (streams[0] as? Map<*, *>)?.let { stream ->
-                        (stream["dataPort"] as? Long)?.toInt()?.let { if (it > 0) audioRemotePort = it }
-                        (stream["controlPort"] as? Long)?.toInt()?.let { if (it > 0) controlRemotePort = it }
+                        (stream["dataPort"] as? Long)?.toInt()?.let {
+                            if (it >
+                                0
+                            ) {
+                                audioRemotePort = it
+                            }
+                        }
+                        (stream["controlPort"] as? Long)?.toInt()?.let {
+                            if (it >
+                                0
+                            ) {
+                                controlRemotePort = it
+                            }
+                        }
                         // The streamConnections layout answers with both ports
                         // nested instead of dataPort/controlPort.
                         val connections = stream["streamConnections"] as? Map<*, *>
-                        connectionPort(connections, "streamConnectionTypeRTP")?.let { audioRemotePort = it }
-                        connectionPort(connections, "streamConnectionTypeRTCP")?.let { controlRemotePort = it }
+                        connectionPort(connections, "streamConnectionTypeRTP")?.let {
+                            audioRemotePort =
+                                it
+                        }
+                        connectionPort(connections, "streamConnectionTypeRTCP")?.let {
+                            controlRemotePort =
+                                it
+                        }
                     }
                 }
                 (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
@@ -671,7 +784,10 @@ class AirPlay2Client(
         audioSocket = DatagramSocket(0)
         audioKey = shk
         audioNonceCounter = 0
-        Log.d(TAG, "Audio stream: data=$audioRemotePort ctrl=$controlRemotePort encrypted=${shk != null}")
+        Log.d(
+            TAG,
+            "Audio stream: data=$audioRemotePort ctrl=$controlRemotePort encrypted=${shk != null}"
+        )
         return true
     }
 
@@ -681,15 +797,13 @@ class AirPlay2Client(
     }
 
     /** Returns the receiver's PTP ClockID, or 0 when it publishes none. */
-    private fun parseSessionResponse(body: ByteArray): Long {
-        return try {
-            val dict = BinaryPlist.decode(body)
-            (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
-            (dict["timingPeerInfo"] as? Map<*, *>)?.get("ClockID") as? Long ?: 0L
-        } catch (e: Exception) {
-            Log.w(TAG, "parseSessionResponse failed: ${e.message}")
-            0L
-        }
+    private fun parseSessionResponse(body: ByteArray): Long = try {
+        val dict = BinaryPlist.decode(body)
+        (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
+        (dict["timingPeerInfo"] as? Map<*, *>)?.get("ClockID") as? Long ?: 0L
+    } catch (e: Exception) {
+        Log.w(TAG, "parseSessionResponse failed: ${e.message}")
+        0L
     }
 
     // ------------------------------------------------------------------ audio
@@ -713,7 +827,12 @@ class AirPlay2Client(
             if (rb >= 0) {
                 val bd = (v shl rb) and 0xFF
                 out[p] = if (bpos == 0) bd.toByte() else (out[p].toInt() or bd).toByte()
-                if (rb == 0) { p++; bpos = 0 } else bpos += blen
+                if (rb == 0) {
+                    p++
+                    bpos = 0
+                } else {
+                    bpos += blen
+                }
             } else {
                 out[p] = (out[p].toInt() or ((v ushr (-rb)) and 0xFF)).toByte()
                 p++
@@ -724,13 +843,13 @@ class AirPlay2Client(
 
         // writeBits carries at most one byte boundary, so nothing wider than 8
         // bits may be written in a single call.
-        writeBits(1, 3)          // tag: channel pair element (stereo)
-        writeBits(0, 4)          // elementInstanceTag
-        writeBits(0, 8)          // unused (12 bits, part 1)
-        writeBits(0, 4)          // unused (12 bits, part 2)
-        writeBits(1, 1)          // hasSize
-        writeBits(0, 2)          // extraBytes (16-bit, no shift)
-        writeBits(1, 1)          // verbatim
+        writeBits(1, 3) // tag: channel pair element (stereo)
+        writeBits(0, 4) // elementInstanceTag
+        writeBits(0, 8) // unused (12 bits, part 1)
+        writeBits(0, 4) // unused (12 bits, part 2)
+        writeBits(1, 1) // hasSize
+        writeBits(0, 2) // extraBytes (16-bit, no shift)
+        writeBits(1, 1) // verbatim
         writeBits((samples ushr 24) and 0xFF, 8)
         writeBits((samples ushr 16) and 0xFF, 8)
         writeBits((samples ushr 8) and 0xFF, 8)
@@ -738,10 +857,10 @@ class AirPlay2Client(
 
         var i = 0
         while (i < pcm.size) {
-            writeBits(pcm[i + 1].toInt() and 0xFF, 8)  // L high byte
-            writeBits(pcm[i + 0].toInt() and 0xFF, 8)  // L low byte
-            writeBits(pcm[i + 3].toInt() and 0xFF, 8)  // R high byte
-            writeBits(pcm[i + 2].toInt() and 0xFF, 8)  // R low byte
+            writeBits(pcm[i + 1].toInt() and 0xFF, 8) // L high byte
+            writeBits(pcm[i + 0].toInt() and 0xFF, 8) // L low byte
+            writeBits(pcm[i + 3].toInt() and 0xFF, 8) // R high byte
+            writeBits(pcm[i + 2].toInt() and 0xFF, 8) // R low byte
             i += 4
         }
         writeBits(7, 3)
@@ -764,14 +883,24 @@ class AirPlay2Client(
                 for (i in 0..7) nonce[4 + i] = ((counter shr (i * 8)) and 0xFF).toByte()
                 val aad = packet.copyOfRange(4, 12)
                 val (encrypted, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
-                    key, nonce, packet.copyOfRange(12, packet.size), aad
+                    key,
+                    nonce,
+                    packet.copyOfRange(12, packet.size),
+                    aad
                 )
                 packet.copyOfRange(0, 12) + encrypted + tag + nonce.copyOfRange(4, 12)
             } else {
                 packet
             }
 
-            socket.send(DatagramPacket(datagram, datagram.size, InetAddress.getByName(host), audioRemotePort))
+            socket.send(
+                DatagramPacket(
+                    datagram,
+                    datagram.size,
+                    InetAddress.getByName(host),
+                    audioRemotePort
+                )
+            )
 
             sequence = (sequence + 1) and 0xFFFF
             rtpTimestamp += frameSize
@@ -849,7 +978,7 @@ class AirPlay2Client(
                     response[1] = 0xD3.toByte()
                     response[2] = buf[2]
                     response[3] = buf[3]
-                    System.arraycopy(buf, 24, response, 8, 8)     // their transmit -> our reference
+                    System.arraycopy(buf, 24, response, 8, 8) // their transmit -> our reference
                     writeUInt64(response, 16, receiveTime)
                     writeUInt64(response, 24, currentNtpTime())
                     timingSocket.send(
@@ -864,17 +993,31 @@ class AirPlay2Client(
 
     fun setVolume(db: Double) {
         val body = "volume: ${"%.6f".format(java.util.Locale.US, db)}\r\n"
-        sendRtspRequest("SET_PARAMETER", sessionUrl, "text/parameters", body.toByteArray(Charsets.UTF_8))
+        sendRtspRequest(
+            "SET_PARAMETER",
+            sessionUrl,
+            "text/parameters",
+            body.toByteArray(Charsets.UTF_8)
+        )
     }
 
-    fun sendMetadata(title: String?, artist: String?, album: String?, artworkBytes: ByteArray? = null) {
+    fun sendMetadata(
+        title: String?,
+        artist: String?,
+        album: String?,
+        artworkBytes: ByteArray? = null
+    ) {
         val dict = linkedMapOf<String, Any?>()
         if (!title.isNullOrEmpty()) dict["dmap.itemname"] = title
         if (!artist.isNullOrEmpty()) dict["daap.songartist"] = artist
         if (!album.isNullOrEmpty()) dict["daap.songalbum"] = album
         if (dict.isNotEmpty()) {
-            sendRtspRequest("SET_PARAMETER", sessionUrl,
-                "application/x-apple-binary-plist", BinaryPlist.encode(dict))
+            sendRtspRequest(
+                "SET_PARAMETER",
+                sessionUrl,
+                "application/x-apple-binary-plist",
+                BinaryPlist.encode(dict)
+            )
         }
         if (artworkBytes != null && artworkBytes.isNotEmpty()) {
             sendRtspRequest("SET_PARAMETER", sessionUrl, "image/jpeg", artworkBytes)
@@ -918,7 +1061,11 @@ class AirPlay2Client(
         }
     }
 
-    private data class EventMessage(val method: String, val headers: Map<String, String>, val body: ByteArray?)
+    private data class EventMessage(
+        val method: String,
+        val headers: Map<String, String>,
+        val body: ByteArray?
+    )
 
     private fun readEventMessage(input: InputStream): EventMessage? {
         val headerLines = mutableListOf<String>()
@@ -976,6 +1123,7 @@ class AirPlay2Client(
                     }
                     eventListener?.onVolumeChange(db)
                 }
+
                 "command" -> {
                     val name = dict["name"] as? String ?: return
                     eventListener?.onRemoteCommand(name)
@@ -1004,17 +1152,25 @@ class AirPlay2Client(
         ptpMaster?.close()
         ptpMaster = null
         audioSocket?.close()
-        try { eventSocket?.close() } catch (_: Exception) {}
+        try {
+            eventSocket?.close()
+        } catch (_: Exception) {}
         controlSocket.close()
         timingSocket.close()
-        try { socket.close() } catch (_: Exception) {}
+        try {
+            socket.close()
+        } catch (_: Exception) {}
     }
 
     private fun startSyncLoop() {
         syncThread = thread(name = "ap2-sync", isDaemon = true) {
             while (running) {
                 sendSyncPacket()
-                try { Thread.sleep(1000) } catch (e: InterruptedException) { return@thread }
+                try {
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    return@thread
+                }
             }
         }
     }
@@ -1028,16 +1184,28 @@ class AirPlay2Client(
             while (running) {
                 try {
                     val resp = sendRequest("POST", "/feedback", null, null)
-                    if (usePtp && ptpMaster == null) mediaClock.reanchor(resp.headers, System.nanoTime())
+                    if (usePtp &&
+                        ptpMaster == null
+                    ) {
+                        mediaClock.reanchor(resp.headers, System.nanoTime())
+                    }
                 } catch (_: Exception) {}
-                try { Thread.sleep(2000) } catch (e: InterruptedException) { return@thread }
+                try {
+                    Thread.sleep(2000)
+                } catch (e: InterruptedException) {
+                    return@thread
+                }
             }
         }
     }
 
     // ------------------------------------------------------------------- wire
 
-    private fun sendPairingRequest(path: String, body: ByteArray, verify: Boolean = false): HttpResponse {
+    private fun sendPairingRequest(
+        path: String,
+        body: ByteArray,
+        verify: Boolean = false
+    ): HttpResponse {
         val headers = mutableListOf<Pair<String, String>>()
         if (pairType == HKP_LEGACY) {
             headers += "X-Apple-HKP" to HKP_LEGACY.toString()
@@ -1082,7 +1250,11 @@ class AirPlay2Client(
             sb.append("CSeq: ${++cseq}\r\n")
             sb.append("User-Agent: $USER_AGENT\r\n")
             for ((k, v) in extraHeaders) sb.append("$k: $v\r\n")
-            if (contentType != null && payload.isNotEmpty()) sb.append("Content-Type: $contentType\r\n")
+            if (contentType != null &&
+                payload.isNotEmpty()
+            ) {
+                sb.append("Content-Type: $contentType\r\n")
+            }
             sb.append("Content-Length: ${payload.size}\r\n")
             sb.append("\r\n")
 
@@ -1099,7 +1271,10 @@ class AirPlay2Client(
      * (client.go:1100-1137).
      */
     private fun writeFramed(out: OutputStream, data: ByteArray) {
-        if (!channelEncrypted) { out.write(data); return }
+        if (!channelEncrypted) {
+            out.write(data)
+            return
+        }
         val key = hapWriteKey ?: return
         var offset = 0
         while (offset < data.size) {
@@ -1108,7 +1283,10 @@ class AirPlay2Client(
             val nonce = ByteArray(12)
             for (i in 0..7) nonce[4 + i] = ((hapWriteNonce shr (i * 8)) and 0xFF).toByte()
             val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
-                key, nonce, data.copyOfRange(offset, offset + n), lengthPrefix
+                key,
+                nonce,
+                data.copyOfRange(offset, offset + n),
+                lengthPrefix
             )
             out.write(lengthPrefix)
             out.write(ct)
@@ -1153,13 +1331,15 @@ class AirPlay2Client(
             val key = hapReadKey ?: return false
             val lengthPrefix = ByteArray(2)
             if (!readFully(lengthPrefix)) return false
-            val length = (lengthPrefix[0].toInt() and 0xFF) or ((lengthPrefix[1].toInt() and 0xFF) shl 8)
+            val length =
+                (lengthPrefix[0].toInt() and 0xFF) or ((lengthPrefix[1].toInt() and 0xFF) shl 8)
             val sealed = ByteArray(length + 16)
             if (!readFully(sealed)) return false
             val nonce = ByteArray(12)
             for (i in 0..7) nonce[4 + i] = ((hapReadNonce shr (i * 8)) and 0xFF).toByte()
             plain = AirPlay2Crypto.chacha20Poly1305Decrypt(
-                key, nonce,
+                key,
+                nonce,
                 sealed.copyOfRange(0, length),
                 lengthPrefix,
                 sealed.copyOfRange(length, sealed.size)

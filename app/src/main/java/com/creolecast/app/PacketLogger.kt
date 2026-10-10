@@ -1,10 +1,10 @@
 package com.creolecast.app
 
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 enum class PacketDirection { IN, OUT }
 enum class PacketType { AUDIO, CONTROL, METADATA, STATS, HANDSHAKE }
@@ -29,7 +29,8 @@ object PacketLogger {
     // Dispatchers.IO threads (one audio/control/stats session per cast destination),
     // so each thread needs its own formatter instance rather than sharing one.
     private val dateFormat = object : ThreadLocal<SimpleDateFormat>() {
-        override fun initialValue(): SimpleDateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+        override fun initialValue(): SimpleDateFormat =
+            SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
     }
 
     fun log(direction: PacketDirection, type: PacketType, message: String, payloadSize: Int = 0) {
@@ -41,18 +42,19 @@ object PacketLogger {
             message = message,
             payloadSize = payloadSize
         )
-        
+
         synchronized(_logs) {
             val lastLog = _logs.firstOrNull()
-            if (lastLog != null && 
-                lastLog.direction == direction && 
-                lastLog.type == type && 
-                lastLog.message == message) {
+            if (lastLog != null &&
+                lastLog.direction == direction &&
+                lastLog.type == type &&
+                lastLog.message == message
+            ) {
                 lastLog.count++
                 lastLog.timestamp = timestamp
-                // We still emit it to let the UI know something happened, 
+                // We still emit it to let the UI know something happened,
                 // but we need a way to distinguish between "new" and "update".
-                // For simplicity, we'll let the adapter handle the merging logic 
+                // For simplicity, we'll let the adapter handle the merging logic
                 // since it maintains its own list anyway.
             } else {
                 _logs.add(0, entry)
@@ -61,7 +63,7 @@ object PacketLogger {
         }
         _logFlow.tryEmit(entry)
     }
-    
+
     fun clear() {
         synchronized(_logs) {
             _logs.clear()

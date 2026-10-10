@@ -35,9 +35,7 @@ class PacketLogActivity : AppCompatActivity() {
 
         val searchView = findViewById<SearchView>(R.id.searchView)
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-            override fun onQueryTextSubmit(query: String?): Boolean {
-                return false
-            }
+            override fun onQueryTextSubmit(query: String?): Boolean = false
 
             override fun onQueryTextChange(newText: String?): Boolean {
                 logAdapter.filter(newText ?: "")
@@ -58,7 +56,8 @@ class PacketLogActivity : AppCompatActivity() {
     }
 }
 
-class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) : RecyclerView.Adapter<PacketLogAdapter.ViewHolder>() {
+class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
+    RecyclerView.Adapter<PacketLogAdapter.ViewHolder>() {
 
     private var filteredLogs: MutableList<PacketLog> = allLogs.toMutableList()
     private var currentQuery: String = ""
@@ -66,11 +65,11 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) : RecyclerVi
     fun addLog(log: PacketLog) {
         // Check if we should merge with the last log (which is at index 0 because we add new logs at the beginning)
         val lastLog = allLogs.firstOrNull()
-        if (lastLog != null && 
-            lastLog.direction == log.direction && 
-            lastLog.type == log.type && 
-            lastLog.message == log.message) {
-            
+        if (lastLog != null &&
+            lastLog.direction == log.direction &&
+            lastLog.type == log.type &&
+            lastLog.message == log.message
+        ) {
             // It's the same, it was already updated in PacketLogger, so we just update the UI
             // The object in allLogs is the same one that was updated in PacketLogger
             val filteredIndex = filteredLogs.indexOf(lastLog)
@@ -82,7 +81,7 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) : RecyclerVi
 
         allLogs.add(0, log)
         if (allLogs.size > 500) allLogs.removeAt(allLogs.size - 1)
-        
+
         if (currentQuery.isEmpty() || matchesQuery(log, currentQuery)) {
             filteredLogs.add(0, log)
             if (filteredLogs.size > 500) filteredLogs.removeAt(filteredLogs.size - 1)
@@ -107,14 +106,15 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) : RecyclerVi
         notifyDataSetChanged()
     }
 
-    private fun matchesQuery(log: PacketLog, query: String): Boolean {
-        return log.message.contains(query, ignoreCase = true) ||
-                log.type.name.contains(query, ignoreCase = true) ||
-                log.direction.name.contains(query, ignoreCase = true)
-    }
+    private fun matchesQuery(log: PacketLog, query: String): Boolean =
+        log.message.contains(query, ignoreCase = true) ||
+            log.type.name.contains(query, ignoreCase = true) ||
+            log.direction.name.contains(query, ignoreCase = true)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_packet_log, parent, false)
+        val view = LayoutInflater.from(
+            parent.context
+        ).inflate(R.layout.item_packet_log, parent, false)
         return ViewHolder(view)
     }
 
@@ -133,8 +133,15 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) : RecyclerVi
         }
 
         val color = when (log.direction) {
-            PacketDirection.IN -> ContextCompat.getColor(holder.itemView.context, R.color.accent_blue)
-            PacketDirection.OUT -> ContextCompat.getColor(holder.itemView.context, R.color.md_theme_primary)
+            PacketDirection.IN -> ContextCompat.getColor(
+                holder.itemView.context,
+                R.color.accent_blue
+            )
+
+            PacketDirection.OUT -> ContextCompat.getColor(
+                holder.itemView.context,
+                R.color.md_theme_primary
+            )
         }
         holder.direction.setTextColor(color)
     }

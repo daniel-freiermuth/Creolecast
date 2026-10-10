@@ -23,7 +23,9 @@ data class Server(
 object ExtraFields {
     fun encode(key: String, value: String): String = "$key=${escape(value)}"
 
-    fun join(fields: List<Pair<String, String>>): String = fields.joinToString(";") { (k, v) -> encode(k, v) }
+    fun join(fields: List<Pair<String, String>>): String = fields.joinToString(";") { (k, v) ->
+        encode(k, v)
+    }
 
     fun get(extra: String?, key: String): String? = parse(extra)[key]
 
@@ -47,9 +49,11 @@ object ExtraFields {
         var i = 0
         while (i < value.length) {
             if (value[i] == '\\' && i + 1 < value.length) {
-                sb.append(value[i + 1]); i += 2
+                sb.append(value[i + 1])
+                i += 2
             } else {
-                sb.append(value[i]); i++
+                sb.append(value[i])
+                i++
             }
         }
         return sb.toString()
@@ -58,7 +62,10 @@ object ExtraFields {
     private fun indexOfUnescaped(s: String, target: Char): Int {
         var i = 0
         while (i < s.length) {
-            if (s[i] == '\\' && i + 1 < s.length) { i += 2; continue }
+            if (s[i] == '\\' && i + 1 < s.length) {
+                i += 2
+                continue
+            }
             if (s[i] == target) return i
             i++
         }
@@ -71,12 +78,18 @@ object ExtraFields {
         var i = 0
         while (i < s.length) {
             if (s[i] == '\\' && i + 1 < s.length) {
-                current.append(s[i]).append(s[i + 1]); i += 2; continue
+                current.append(s[i]).append(s[i + 1])
+                i += 2
+                continue
             }
             if (s[i] == delimiter) {
-                parts.add(current.toString()); current.clear(); i++; continue
+                parts.add(current.toString())
+                current.clear()
+                i++
+                continue
             }
-            current.append(s[i]); i++
+            current.append(s[i])
+            i++
         }
         parts.add(current.toString())
         return parts

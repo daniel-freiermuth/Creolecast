@@ -26,7 +26,11 @@ class MediaClock(private val nanoTime: () -> Long = System::nanoTime) {
      * identity is still kept so [configureFromLocalClock] can anchor to it.
      */
     @Synchronized
-    fun configureFromSetup(clockId: Long, headers: Map<String, String>, receivedAtNs: Long): Boolean {
+    fun configureFromSetup(
+        clockId: Long,
+        headers: Map<String, String>,
+        receivedAtNs: Long
+    ): Boolean {
         require(clockId != 0L) { "clockId must be non-zero" }
         timelineId = clockId
         val timestamp = receiverClockTimestamp(headers) ?: return false
@@ -92,8 +96,9 @@ class MediaClock(private val nanoTime: () -> Long = System::nanoTime) {
          * processing time, both in milliseconds (mirror.go receiverClockTimestamp).
          */
         fun receiverClockTimestamp(headers: Map<String, String>): Long? {
-            fun header(name: String) =
-                headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value?.trim()
+            fun header(name: String) = headers.entries.firstOrNull {
+                it.key.equals(name, ignoreCase = true)
+            }?.value?.trim()
             val received = header("X-Apple-RequestReceivedTimestamp")?.toLongOrNull() ?: return null
             val processing = header("X-Apple-ProcessingTime")?.toLongOrNull() ?: return null
             if (received < 0 || processing < 0) return null

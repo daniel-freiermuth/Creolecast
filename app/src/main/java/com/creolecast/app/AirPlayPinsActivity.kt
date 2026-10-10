@@ -21,7 +21,6 @@ class AirPlayPinsActivity : AppCompatActivity() {
     private lateinit var adapter: PinAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_airplay_pins)
 
@@ -44,7 +43,8 @@ class AirPlayPinsActivity : AppCompatActivity() {
     }
 
     private fun loadPins() {
-        val sharedPreferences = getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
+        val sharedPreferences =
+            getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
         val allPrefs = sharedPreferences.all
         val pins = allPrefs.filterKeys { it.startsWith("airplay2_pin_") }
             .map { (key, value) ->
@@ -80,7 +80,11 @@ class AirPlayPinsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.save) { _, _ ->
                 val newPin = input.text.toString()
                 if (newPin.isNotEmpty()) {
-                    val sharedPreferences = getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
+                    val sharedPreferences =
+                        getSharedPreferences(
+                            AudioCastService.SECURE_PREFS_NAME,
+                            Context.MODE_PRIVATE
+                        )
                     sharedPreferences.edit().putString("airplay2_pin_$host", newPin).apply()
                     loadPins()
                 }
@@ -94,7 +98,8 @@ class AirPlayPinsActivity : AppCompatActivity() {
             .setTitle(getString(R.string.delete_pin))
             .setMessage(host)
             .setPositiveButton(R.string.delete_pin) { _, _ ->
-                val sharedPreferences = getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
+                val sharedPreferences =
+                    getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
                 sharedPreferences.edit().remove("airplay2_pin_$host").apply()
                 loadPins()
             }
@@ -115,7 +120,9 @@ class AirPlayPinsActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val view = LayoutInflater.from(parent.context).inflate(R.layout.item_airplay_pin, parent, false)
+            val view = LayoutInflater.from(
+                parent.context
+            ).inflate(R.layout.item_airplay_pin, parent, false)
             return ViewHolder(view)
         }
 

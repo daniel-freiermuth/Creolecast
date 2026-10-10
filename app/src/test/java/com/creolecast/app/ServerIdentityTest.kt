@@ -77,6 +77,9 @@ class ServerIdentityTest {
 
         // Both render as "unknown"; documenting that this is a deliberate, harmless
         // collapse - an entry with a literal "unknown" platform is not a real case.
-        assertEquals(DiscoveryManager.identityOf(noPlatform), DiscoveryManager.identityOf(literalUnknown))
+        assertEquals(
+            DiscoveryManager.identityOf(noPlatform),
+            DiscoveryManager.identityOf(literalUnknown)
+        )
     }
 }

@@ -209,6 +209,5 @@ class BinaryPlistTest {
         assertEquals(1, (decoded["timingPeerList"] as? List<*>)?.size)
     }
 
-    private fun hex(s: String): ByteArray =
-        s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    private fun hex(s: String): ByteArray = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

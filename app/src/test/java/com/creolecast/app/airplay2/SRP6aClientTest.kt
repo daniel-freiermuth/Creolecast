@@ -37,7 +37,7 @@ class SRP6aClientTest {
         val srp = SRP6aClient("3939")
         srp.buildM1(transient = false)
         val fakeM2 = TlvUtil.build(
-            TlvUtil.TLV_STATE to byteArrayOf(5),         // wrong state (should be 2)
+            TlvUtil.TLV_STATE to byteArrayOf(5), // wrong state (should be 2)
             TlvUtil.TLV_SALT to ByteArray(16),
             TlvUtil.TLV_PUBLIC_KEY to ByteArray(384) { 0x42 }
         )
@@ -50,7 +50,7 @@ class SRP6aClientTest {
         srp.buildM1(transient = false)
         val fakeM2 = TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(2),
-            TlvUtil.TLV_SALT to ByteArray(8),            // should be 16 bytes
+            TlvUtil.TLV_SALT to ByteArray(8), // should be 16 bytes
             TlvUtil.TLV_PUBLIC_KEY to ByteArray(384) { 0x42 }
         )
         assertNull(srp.processM2(fakeM2))
@@ -72,7 +72,15 @@ class SRP6aClientTest {
     fun `processM2 rejects B equal to N (still 0 mod N)`() {
         val srp = SRP6aClient("3939")
         srp.buildM1(transient = false)
-        val nBytes = SRP6aClient.N.toByteArray().let { if (it[0] == 0.toByte()) it.copyOfRange(1, it.size) else it }
+        val nBytes = SRP6aClient.N.toByteArray().let {
+            if (it[0] ==
+                0.toByte()
+            ) {
+                it.copyOfRange(1, it.size)
+            } else {
+                it
+            }
+        }
         val fakeM2 = TlvUtil.build(
             TlvUtil.TLV_STATE to byteArrayOf(2),
             TlvUtil.TLV_SALT to ByteArray(16) { it.toByte() },
@@ -120,7 +128,13 @@ class SRP6aClientTest {
         // M1 is always the same structure regardless of PIN (PIN is used in M3)
         val m1a = TlvUtil.parse(SRP6aClient("1234").buildM1(transient = false))
         val m1b = TlvUtil.parse(SRP6aClient("5678").buildM1(transient = false))
-        assertArrayEquals(m1a[TlvUtil.TLV_STATE]?.firstOrNull(), m1b[TlvUtil.TLV_STATE]?.firstOrNull())
-        assertArrayEquals(m1a[TlvUtil.TLV_METHOD]?.firstOrNull(), m1b[TlvUtil.TLV_METHOD]?.firstOrNull())
+        assertArrayEquals(
+            m1a[TlvUtil.TLV_STATE]?.firstOrNull(),
+            m1b[TlvUtil.TLV_STATE]?.firstOrNull()
+        )
+        assertArrayEquals(
+            m1a[TlvUtil.TLV_METHOD]?.firstOrNull(),
+            m1b[TlvUtil.TLV_METHOD]?.firstOrNull()
+        )
     }
 }
