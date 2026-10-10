@@ -1579,7 +1579,24 @@ class AudioCastService : Service() {
                     }.toString()))
                 } catch (_: Exception) {}
             }
+
+            // DLNA (UPnP RenderingControl)
+            _activeDestinations.value.filter { it.platform == "DLNA" }.forEach { dest ->
+                val (_, rcUrl) = getDlnaControlUrls(dest.extra)
+                if (rcUrl != null) setDlnaVolume(rcUrl, dlnaVolumeForDb(dB))
+            }
         }
+    }
+
+    private suspend fun setDlnaVolume(rcUrl: String, volume: Int) {
+        try {
+            val setVolBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>$volume</DesiredVolume></u:SetVolume></s:Body></s:Envelope>"""
+            client.post(rcUrl) {
+                header("SoapAction", "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"")
+                contentType(ContentType.parse("text/xml; charset=utf-8"))
+                setBody(setVolBody)
+            }
+        } catch (_: Exception) {}
     }
 
     private suspend fun adjustDlnaVolume(rcUrl: String, direction: String) {
@@ -2220,6 +2237,11 @@ class AudioCastService : Service() {
         const val LATENCY = 66150
         private const val AP2_ALAC_FRAME_SIZE = 352  // ALAC frame size in samples for AirPlay 2
         private const val MAX_VOLUME_STEPS = 30
+
+        /** Map an absolute receiver volume in dB (-30.0 silent .. 0.0 max) to a
+         *  UPnP RenderingControl volume (0..100). */
+        internal fun dlnaVolumeForDb(dB: Double): Int =
+            ((dB + 30) * 100 / 30).toInt().coerceIn(0, 100)
         
 
         private const val RECONNECT_INITIAL_BACKOFF = 1000L
