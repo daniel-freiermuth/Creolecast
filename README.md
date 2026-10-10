@@ -76,3 +76,21 @@
     <a href="https://github.com/LSPosed/DisableFlagSecure">DisableFlagSecure</a> module with
     LSPosed/Magisk.</i>
 </p>
+
+## Development
+
+CI runs these on every pull request; run them locally before pushing:
+
+```sh
+./gradlew spotlessApply                  # format Kotlin (ktlint, .editorconfig)
+./gradlew spotlessCheck detektMain detektTest lintDebug testDebugUnitTest assembleDebug
+```
+
+- **ktlint** (via Spotless) formats; **detekt** (all rules) and **Android Lint** (warnings
+  as errors) analyse; Kotlin compiler warnings fail the build. Existing detekt and Lint
+  findings are grandfathered in `app/detekt-baseline-*.xml` and `app/lint-baseline.xml`, so
+  only new code has to be clean. Regenerate a baseline only when deliberately accepting
+  findings: `./gradlew detektBaselineMain detektBaselineTest` or `./gradlew updateLintBaseline`.
+- Repository checks (`.github/workflows/repo-checks.yml`): actionlint and zizmor for
+  workflows, gitleaks for secrets, markdownlint, yamllint and editorconfig-checker. Their
+  configs live in the repository root and `.github/`.
