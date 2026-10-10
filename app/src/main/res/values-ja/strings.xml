@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">OK</string>
     <!-- Main Activity -->
     <string name="media_projection_denied">MediaProjection の権限が拒否されました。</string>
     <string name="select_server_first">最初にサーバーを選択してください。</string>
@@ -8,32 +7,19 @@
     <string name="refresh">更新</string>
     <string name="stop">停止</string>
     <string name="start">開始</string>
-    <string name="home">ホーム</string>
-    <string name="audio">オーディオ</string>
-    <string name="devices">デバイス</string>
-    <string name="logs">ログ</string>
     <string name="status">ステータス</string>
     <string name="disconnected">切断</string>
     <string name="connect">接続</string>
     <string name="servers">サーバー</string>
-    <string name="ready_to_cast">キャストの準備完了</string>
-    <string name="manual_entry">手動入力</string>
-    <string name="manual_entry_desc">サーバーの IP とポートを入力</string>
-    <string name="ip_address">IP アドレス</string>
-    <string name="port">ポート</string>
-    <string name="add">追加</string>
     <string name="synchronization">同期</string>
-    <string name="create">作成</string>
-    <string name="no_servers_found">サーバーが見つかりませんでした</string>
-    <string name="grant_notification_permission">通知権限を許可する</string>
     <!-- Settings Activity -->
     <string name="settings">設定</string>
     <string name="general">一般</string>
     <string name="casting">キャスト</string>
     <string name="about">このアプリについて</string>
-    <string name="version_format">バージョン %1$s</string>
-    <string name="secret_logs_one_tap">あと 1 回タップしてシークレットログを表示…</string>
-    <string name="secret_logs_multiple_taps">あと %1$d 回タップしてシークレットログを表示…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="other">あと %1$d 回タップしてシークレットログを表示…</item>
+    </plurals>
     <string name="server_cleared">最後のサーバー接続がクリアされました</string>
     <string name="notification_access">通知へのアクセス</string>
     <string name="notification_access_desc">メディアメタデータに必要です</string>
@@ -55,11 +41,7 @@
 
     <!-- AudioCastService -->
     <string name="casting_to">%1$s (%2$s) にキャスト中</string>
-    <string name="casting_to_multiple">%1$d 台のデバイスにキャスト中</string>
-    <string name="connecting_to">%1$s に接続中</string>
     <string name="not_casting">キャストしていません</string>
-    <string name="unknown">不明</string>
-    <string name="connecting">接続中…</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">パケットログ</string>
     <string name="packet_logs_desc">デバッグ用の詳細なネットワークパケットログを表示します</string>

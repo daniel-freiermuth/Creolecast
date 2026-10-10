@@ -1,37 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">சரி</string>
     <string name="media_projection_denied">MediaProjection இசைவு மறுக்கப்பட்டது.</string>
     <string name="select_server_first">முதலில் சர்வரைத் தேர்ந்தெடுக்கவும்.</string>
     <string name="scanning">வருடு செய்கிறது…</string>
     <string name="refresh">புதுப்பிப்பு</string>
     <string name="stop">நிறுத்து</string>
     <string name="start">தொடங்கு</string>
-    <string name="home">வீடு</string>
-    <string name="audio">ஆடியோ</string>
-    <string name="devices">சாதனங்கள்</string>
-    <string name="logs">பதிவுகள்</string>
     <string name="status">நிலை</string>
     <string name="disconnected">துண்டிக்கப்பட்டது</string>
     <string name="connect">இணை</string>
     <string name="servers">சேவையகங்கள்</string>
-    <string name="ready_to_cast">நடிக்கத் ஆயத்தம்</string>
-    <string name="manual_entry">கைமுறை நுழைவு</string>
-    <string name="manual_entry_desc">சர்வர் ஐபி மற்றும் போர்ட்டை உள்ளிடவும்</string>
-    <string name="ip_address">ஐபி முகவரி</string>
-    <string name="port">துறைமுகம்</string>
-    <string name="add">கூட்டு</string>
     <string name="synchronization">ஒத்தியக்கம்</string>
-    <string name="create">உருவாக்கு</string>
-    <string name="no_servers_found">சேவையகங்கள் எதுவும் கண்டறியப்படவில்லை</string>
-    <string name="grant_notification_permission">அறிவிப்பு இசைவு வழங்கவும்</string>
     <string name="settings">அமைப்புகள்</string>
     <string name="general">பொது</string>
     <string name="casting">நடிப்பு</string>
     <string name="about">பற்றி</string>
-    <string name="version_format">பதிப்பு %1$s</string>
-    <string name="secret_logs_one_tap">ரகசிய பதிவுகளை உள்ளிட இன்னும் ஒரு முறை தட்டவும்…</string>
-    <string name="secret_logs_multiple_taps">ரகசியப் பதிவுகளை உள்ளிட இன்னும் %1$d தட்டுங்கள்…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="one">ரகசிய பதிவுகளை உள்ளிட இன்னும் ஒரு முறை தட்டவும்…</item>
+        <item quantity="other">ரகசியப் பதிவுகளை உள்ளிட இன்னும் %1$d தட்டுங்கள்…</item>
+    </plurals>
     <string name="server_cleared">கடைசியாக சர்வர் இணைப்பு அழிக்கப்பட்டது</string>
     <string name="notification_access">அறிவிப்பு அணுகல்</string>
     <string name="notification_access_desc">மீடியா மெட்டாடேட்டாவுக்குத் தேவை</string>
@@ -39,11 +26,7 @@
     <string name="reset_last_server_desc">சேமித்த சர்வர் இணைப்பு விவரங்களை அழிக்கவும்</string>
     <string name="cancel">ரத்துசெய்</string>
     <string name="casting_to">%1$s (%2$s) க்கு அனுப்புகிறது</string>
-    <string name="casting_to_multiple">%1$d சாதனங்களுக்கு அனுப்புகிறது</string>
-    <string name="connecting_to">%1$s உடன் இணைக்கிறது</string>
     <string name="not_casting">நடிக்கவில்லை</string>
-    <string name="unknown">தெரியவில்லை</string>
-    <string name="connecting">இணைக்கிறது…</string>
     <string name="packet_logs">பாக்கெட் பதிவுகள்</string>
     <string name="packet_logs_desc">பிழைத்திருத்தத்திற்கான விரிவான பிணைய பாக்கெட் பதிவுகளைப் பார்க்கவும்</string>
     <string name="search_logs">பதிவுகளைத் தேடு…</string>

@@ -13,7 +13,7 @@
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
             app:navigationIcon="@android:drawable/ic_menu_revert"
-            app:title="Packet Exchange" />
+            app:title="@string/packet_exchange" />
 
         <androidx.appcompat.widget.SearchView
             android:id="@+id/searchView"
@@ -23,7 +23,7 @@
             android:layout_marginBottom="8dp"
             android:background="?attr/colorSurface"
             app:iconifiedByDefault="false"
-            app:queryHint="Search logs..." />
+            app:queryHint="@string/search_logs" />
 
     </com.google.android.material.appbar.AppBarLayout>
 
@@ -41,7 +41,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
-        android:contentDescription="Clear logs"
+        android:contentDescription="@string/clear_logs"
         app:srcCompat="@android:drawable/ic_menu_delete" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

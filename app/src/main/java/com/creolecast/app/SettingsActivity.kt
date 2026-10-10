@@ -49,23 +49,23 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun handlePacketLogClick() {
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastClickTime > 2000) {
+        if (currentTime - lastClickTime > SECRET_TAP_WINDOW_MS) {
             packetLogClickCount = 1
         } else {
             packetLogClickCount++
         }
         lastClickTime = currentTime
 
-        if (packetLogClickCount >= 3) {
+        if (packetLogClickCount >= SECRET_TAPS_REQUIRED) {
             packetLogClickCount = 0
             startActivity(Intent(this, PacketLogActivity::class.java))
         } else {
-            val remaining = 3 - packetLogClickCount
-            val message = if (remaining == 1) {
-                getString(R.string.secret_logs_one_tap)
-            } else {
-                getString(R.string.secret_logs_multiple_taps, remaining)
-            }
+            val remaining = SECRET_TAPS_REQUIRED - packetLogClickCount
+            val message = resources.getQuantityString(
+                R.plurals.secret_logs_remaining_taps,
+                remaining,
+                remaining
+            )
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
     }
@@ -80,5 +80,11 @@ class SettingsActivity : AppCompatActivity() {
             apply()
         }
         Toast.makeText(this, getString(R.string.server_cleared), Toast.LENGTH_SHORT).show()
+    }
+
+    private companion object {
+        /** Long-presses further apart than this restart the hidden packet-log tap count. */
+        const val SECRET_TAP_WINDOW_MS = 2000L
+        const val SECRET_TAPS_REQUIRED = 3
     }
 }

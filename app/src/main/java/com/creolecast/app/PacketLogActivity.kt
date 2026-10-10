@@ -1,5 +1,6 @@
 package com.creolecast.app
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -38,7 +39,7 @@ class PacketLogActivity : AppCompatActivity() {
             override fun onQueryTextSubmit(query: String?): Boolean = false
 
             override fun onQueryTextChange(newText: String?): Boolean {
-                logAdapter.filter(newText ?: "")
+                logAdapter.filter(newText.orEmpty())
                 return true
             }
         })
@@ -59,17 +60,14 @@ class PacketLogActivity : AppCompatActivity() {
 class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
     RecyclerView.Adapter<PacketLogAdapter.ViewHolder>() {
 
-    private var filteredLogs: MutableList<PacketLog> = allLogs.toMutableList()
+    private val filteredLogs: MutableList<PacketLog> = allLogs.toMutableList()
     private var currentQuery: String = ""
 
     fun addLog(log: PacketLog) {
-        // Check if we should merge with the last log (which is at index 0 because we add new logs at the beginning)
+        // Check if we should merge with the last log (which is at index 0 because we add new
+        // logs at the beginning)
         val lastLog = allLogs.firstOrNull()
-        if (lastLog != null &&
-            lastLog.direction == log.direction &&
-            lastLog.type == log.type &&
-            lastLog.message == log.message
-        ) {
+        if (lastLog != null && isRepeatOf(lastLog, log)) {
             // It's the same, it was already updated in PacketLogger, so we just update the UI
             // The object in allLogs is the same one that was updated in PacketLogger
             val filteredIndex = filteredLogs.indexOf(lastLog)
@@ -80,14 +78,20 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
         }
 
         allLogs.add(0, log)
-        if (allLogs.size > 500) allLogs.removeAt(allLogs.size - 1)
+        if (allLogs.size > MAX_LOGS) allLogs.removeAt(allLogs.size - 1)
 
         if (currentQuery.isEmpty() || matchesQuery(log, currentQuery)) {
             filteredLogs.add(0, log)
-            if (filteredLogs.size > 500) filteredLogs.removeAt(filteredLogs.size - 1)
+            if (filteredLogs.size > MAX_LOGS) filteredLogs.removeAt(filteredLogs.size - 1)
             notifyItemInserted(0)
         }
     }
+
+    /** Same merge rule as [PacketLogger.log]: consecutive identical packets share one row. */
+    private fun isRepeatOf(previous: PacketLog, log: PacketLog): Boolean =
+        previous.direction == log.direction &&
+            previous.type == log.type &&
+            previous.message == log.message
 
     fun clear() {
         val size = filteredLogs.size
@@ -96,13 +100,14 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
         notifyItemRangeRemoved(0, size)
     }
 
+    // A new search query replaces the whole visible list, so there are no finer-grained
+    // change events to report.
+    @SuppressLint("NotifyDataSetChanged")
     fun filter(query: String) {
         currentQuery = query
-        filteredLogs = if (query.isEmpty()) {
-            allLogs.toMutableList()
-        } else {
-            allLogs.filter { matchesQuery(it, query) }.toMutableList()
-        }
+        val matching = if (query.isEmpty()) allLogs else allLogs.filter { matchesQuery(it, query) }
+        filteredLogs.clear()
+        filteredLogs.addAll(matching)
         notifyDataSetChanged()
     }
 
@@ -127,7 +132,10 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
 
         if (log.count > 1) {
             holder.count.visibility = View.VISIBLE
-            holder.count.text = "x${log.count}"
+            holder.count.text = holder.itemView.context.getString(
+                R.string.packet_log_repeat_count,
+                log.count
+            )
         } else {
             holder.count.visibility = View.GONE
         }
@@ -154,5 +162,10 @@ class PacketLogAdapter(private val allLogs: MutableList<PacketLog>) :
         val count: TextView = view.findViewById(R.id.countText)
         val time: TextView = view.findViewById(R.id.timeText)
         val message: TextView = view.findViewById(R.id.messageText)
+    }
+
+    private companion object {
+        /** Same cap as [PacketLogger] keeps for its own history. */
+        const val MAX_LOGS = 500
     }
 }

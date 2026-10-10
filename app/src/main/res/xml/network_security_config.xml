@@ -4,8 +4,11 @@
    (AirPlay, DLNA, Google Cast, RAOP, AriaCast-native), discovered at arbitrary IPs on
    the LAN via mDNS/SSDP/UDP broadcast - there's no fixed domain list for that, and
    Android's network security config can't express "cleartext OK only on private IP
-   ranges", so cleartext stays allowed by default here for that to keep working.
+   ranges", so cleartext stays allowed by default here for that to keep working. That is
+   why InsecureBaseConfiguration is suppressed on the base-config below.
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true" />
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration" />
 </network-security-config>

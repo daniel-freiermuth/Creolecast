@@ -3,7 +3,6 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/windowBackground"
     android:fitsSystemWindows="true">
 
     <com.google.android.material.appbar.AppBarLayout
@@ -73,6 +72,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_sort_by_size"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -112,6 +112,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_lock_idle_lock"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -150,6 +151,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_lock_idle_alarm"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -202,6 +204,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_sort_by_size"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -241,6 +244,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorError" />
 
                 <LinearLayout

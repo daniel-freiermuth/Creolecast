@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">OK</string>
     <!-- Main Activity -->
     <string name="media_projection_denied">MediaProjection-Berechtigung verweigert.</string>
     <string name="select_server_first">Bitte wählen Sie zuerst einen Server aus.</string>
@@ -8,32 +7,20 @@
     <string name="refresh">Aktualisieren</string>
     <string name="stop">Stopp</string>
     <string name="start">Start</string>
-    <string name="home">Start</string>
-    <string name="audio">Audio</string>
-    <string name="devices">Geräte</string>
-    <string name="logs">Protokolle</string>
     <string name="status">Status</string>
     <string name="disconnected">GETRENNT</string>
     <string name="connect">Verbinden</string>
     <string name="servers">Server</string>
-    <string name="ready_to_cast">Bereit zum Streamen</string>
-    <string name="manual_entry">Manuelle Eingabe</string>
-    <string name="manual_entry_desc">Server-IP und Port eingeben</string>
-    <string name="ip_address">IP-Adresse</string>
-    <string name="port">Port</string>
-    <string name="add">Hinzufügen</string>
     <string name="synchronization">Synchronisierung</string>
-    <string name="create">Erstellen</string>
-    <string name="no_servers_found">Keine Server gefunden</string>
-    <string name="grant_notification_permission">Benachrichtigungsberechtigung erteilen</string>
     <!-- Settings Activity -->
     <string name="settings">Einstellungen</string>
     <string name="general">Allgemein</string>
     <string name="casting">Streaming</string>
     <string name="about">Über</string>
-    <string name="version_format">Version %1$s</string>
-    <string name="secret_logs_one_tap">Noch einmal tippen für geheime Protokolle…</string>
-    <string name="secret_logs_multiple_taps">Noch %1$d Mal tippen für geheime Protokolle…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="one">Noch einmal tippen für geheime Protokolle…</item>
+        <item quantity="other">Noch %1$d Mal tippen für geheime Protokolle…</item>
+    </plurals>
     <string name="server_cleared">Letzte Serververbindung gelöscht</string>
     <string name="notification_access">Benachrichtigungszugriff</string>
     <string name="notification_access_desc">Erforderlich für Medienmetadaten</string>
@@ -53,11 +40,7 @@
     <string name="cancel">Abbrechen</string>
     <!-- AudioCastService -->
     <string name="casting_to">Streaming auf %1$s (%2$s)</string>
-    <string name="casting_to_multiple">Streaming auf %1$d Geräte</string>
-    <string name="connecting_to">Verbinden mit %1$s</string>
     <string name="not_casting">Nicht am Streamen</string>
-    <string name="unknown">Unbekannt</string>
-    <string name="connecting">Verbindung wird hergestellt…</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">Paketprotokolle</string>
     <string name="packet_logs_desc">Detaillierte Netzwerk-Paketprotokolle zur Fehlerbehebung anzeigen</string>

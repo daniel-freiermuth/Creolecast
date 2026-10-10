@@ -1,48 +1,35 @@
 <resources>
     <string name="app_name" translatable="false">CreoleCast</string>
 
-    <!-- Update Manager -->
-    <string name="ok">OK</string>
-
     <!-- Main Activity -->
     <string name="media_projection_denied">MediaProjection permission denied.</string>
     <string name="record_audio_permission_required">Microphone permission is required to capture and cast audio.</string>
-    <string name="record_audio_permission_permanently_denied">CreoleCast needs microphone access to capture and cast audio, but it\'s been denied. Open Settings to grant it.</string>
+    <string name="record_audio_permission_permanently_denied">CreoleCast needs microphone access to capture and cast audio, but it’s been denied. Open Settings to grant it.</string>
     <string name="notification_access_required_title">Notification Access Required</string>
-    <string name="notification_access_required_message">CreoleCast does not read your notifications. Android only lets an app reach the active media session — where track info, artwork and the play/pause/skip controls live — if it is registered as a notification listener. That is the only reason this is needed.\n\nIt also isn\'t just for showing track info: some receivers (like the Music Assistant AriaCast Receiver) only start playback once CreoleCast tells them playback has started, and that signal comes from the same media session. Without it, casting can look connected and audio can be sent, but nothing will actually play.\n\nIf Android shows \"This setting is currently unavailable\" or \"Restricted setting\", go to Settings → Apps → CreoleCast, tap the ⋮ menu in the top right, and choose \"Allow restricted settings\" — this is required for apps installed outside the Play Store. Then try enabling it again.</string>
+    <string name="notification_access_required_message">CreoleCast does not read your notifications. Android only lets an app reach the active media session — where track info, artwork and the play/pause/skip controls live — if it is registered as a notification listener. That is the only reason this is needed.\n\nIt also isn’t just for showing track info: some receivers (like the Music Assistant AriaCast Receiver) only start playback once CreoleCast tells them playback has started, and that signal comes from the same media session. Without it, casting can look connected and audio can be sent, but nothing will actually play.\n\nIf Android shows “This setting is currently unavailable” or “Restricted setting”, go to Settings → Apps → CreoleCast, tap the ⋮ menu in the top right, and choose “Allow restricted settings” — this is required for apps installed outside the Play Store. Then try enabling it again.</string>
     <string name="open_notification_settings">Open Settings</string>
     <string name="select_server_first">Please select a server first.</string>
     <string name="scanning">Scanning…</string>
     <string name="refresh">Refresh</string>
     <string name="stop">Stop</string>
     <string name="start">Start</string>
-    <string name="home">Home</string>
-    <string name="audio">Audio</string>
-    <string name="devices">Devices</string>
-    <string name="logs">Logs</string>
     <string name="status">Status</string>
     <string name="disconnected">DISCONNECTED</string>
     <string name="connect">Connect</string>
     <string name="servers">Servers</string>
-    <string name="ready_to_cast">Ready to cast</string>
-    <string name="manual_entry">Manual Entry</string>
-    <string name="manual_entry_desc">Enter server IP and Port</string>
-    <string name="ip_address">IP Address</string>
-    <string name="port">Port</string>
-    <string name="add">Add</string>
     <string name="synchronization">Synchronization</string>
-    <string name="create">Create</string>
-    <string name="no_servers_found">No servers discovered</string>
-    <string name="grant_notification_permission">Grant Notification Permission</string>
+    <string name="sync_delay_label">%1$s (%2$dms)</string>
+    <string name="remove_server">Remove server</string>
 
     <!-- Settings Activity -->
     <string name="settings">Settings</string>
     <string name="general">General</string>
     <string name="casting">Casting</string>
     <string name="about">About</string>
-    <string name="version_format">Version %1$s</string>
-    <string name="secret_logs_one_tap">One more tap to enter secret logs…</string>
-    <string name="secret_logs_multiple_taps">%1$d more taps to enter secret logs…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="one">One more tap to enter secret logs…</item>
+        <item quantity="other">%1$d more taps to enter secret logs…</item>
+    </plurals>
     <string name="server_cleared">Last server connection cleared</string>
     <string name="notification_access">Notification Access</string>
     <string name="notification_access_desc">Required for media metadata AND to start playback on some receivers</string>
@@ -69,15 +56,14 @@
 
     <!-- AudioCastService -->
     <string name="casting_to">Casting to %1$s (%2$s)</string>
-    <string name="casting_to_multiple">Casting to %1$d devices</string>
-    <string name="connecting_to">Connecting to %1$s</string>
     <string name="not_casting">Not Casting</string>
-    <string name="unknown">Unknown</string>
-    <string name="connecting">Connecting…</string>
-
+    <string name="volume_down">Volume down</string>
+    <string name="volume_up">Volume up</string>
 
     <!-- Packet Log Activity -->
     <string name="packet_logs">Packet Logs</string>
+    <string name="packet_exchange">Packet Exchange</string>
+    <string name="packet_log_repeat_count">x%1$d</string>
     <string name="packet_logs_desc">View detailed network packet logs for debugging</string>
     <string name="search_logs">Search logs…</string>
     <string name="clear_logs">Clear Logs</string>

@@ -3,6 +3,7 @@ package com.creolecast.app
 import android.content.Context
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.materialswitch.MaterialSwitch
 
@@ -26,27 +27,27 @@ class ProtocolsActivity : AppCompatActivity() {
         val snapcastSwitch = findViewById<MaterialSwitch>(R.id.snapcastSwitch)
         dlnaSwitch.isChecked = sharedPreferences.getBoolean(KEY_DLNA_ENABLED, false)
         dlnaSwitch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(KEY_DLNA_ENABLED, isChecked).apply()
+            sharedPreferences.edit { putBoolean(KEY_DLNA_ENABLED, isChecked) }
         }
 
         googleCastSwitch.isChecked = sharedPreferences.getBoolean(KEY_GOOGLE_CAST_ENABLED, false)
         googleCastSwitch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(KEY_GOOGLE_CAST_ENABLED, isChecked).apply()
+            sharedPreferences.edit { putBoolean(KEY_GOOGLE_CAST_ENABLED, isChecked) }
         }
 
         airPlaySwitch.isChecked = sharedPreferences.getBoolean(KEY_AIRPLAY_ENABLED, false)
         airPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(KEY_AIRPLAY_ENABLED, isChecked).apply()
+            sharedPreferences.edit { putBoolean(KEY_AIRPLAY_ENABLED, isChecked) }
         }
 
         airPlay2Switch.isChecked = sharedPreferences.getBoolean(KEY_AIRPLAY2_ENABLED, false)
         airPlay2Switch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(KEY_AIRPLAY2_ENABLED, isChecked).apply()
+            sharedPreferences.edit { putBoolean(KEY_AIRPLAY2_ENABLED, isChecked) }
         }
 
         snapcastSwitch.isChecked = sharedPreferences.getBoolean(KEY_SNAPCAST_ENABLED, false)
         snapcastSwitch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(KEY_SNAPCAST_ENABLED, isChecked).apply()
+            sharedPreferences.edit { putBoolean(KEY_SNAPCAST_ENABLED, isChecked) }
         }
     }
 

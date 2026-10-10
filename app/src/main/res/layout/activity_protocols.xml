@@ -3,7 +3,6 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/windowBackground"
     android:fitsSystemWindows="true">
 
     <com.google.android.material.appbar.AppBarLayout
@@ -45,6 +44,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_tile_icon"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -69,7 +69,6 @@
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/ariaCastSwitch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
@@ -88,6 +87,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_slideshow"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -130,6 +130,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_media_play"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -173,6 +174,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_share"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -217,6 +219,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_share"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout
@@ -259,6 +262,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@android:drawable/ic_menu_camera"
+                    android:importantForAccessibility="no"
                     app:tint="?attr/colorOnSurfaceVariant" />
 
                 <LinearLayout

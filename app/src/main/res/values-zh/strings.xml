@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">确定</string>
     <!-- Main Activity -->
     <string name="media_projection_denied">媒体投影权限被拒绝。</string>
     <string name="select_server_first">请先选择一个服务器。</string>
@@ -8,32 +7,19 @@
     <string name="refresh">刷新</string>
     <string name="stop">停止</string>
     <string name="start">开始</string>
-    <string name="home">首页</string>
-    <string name="audio">音频</string>
-    <string name="devices">设备</string>
-    <string name="logs">日志</string>
     <string name="status">状态</string>
     <string name="disconnected">已断开连接</string>
     <string name="connect">连接</string>
     <string name="servers">服务器</string>
-    <string name="ready_to_cast">准备投放</string>
-    <string name="manual_entry">手动输入</string>
-    <string name="manual_entry_desc">输入服务器 IP 和端口</string>
-    <string name="ip_address">IP 地址</string>
-    <string name="port">端口</string>
-    <string name="add">添加</string>
     <string name="synchronization">同步</string>
-    <string name="create">创建</string>
-    <string name="no_servers_found">未发现服务器</string>
-    <string name="grant_notification_permission">授予通知权限</string>
     <!-- Settings Activity -->
     <string name="settings">设置</string>
     <string name="general">常规</string>
     <string name="casting">投放</string>
     <string name="about">关于</string>
-    <string name="version_format">版本 %1$s</string>
-    <string name="secret_logs_one_tap">再点一次进入秘密日志…</string>
-    <string name="secret_logs_multiple_taps">再点 %1$d 次进入秘密日志…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="other">再点 %1$d 次进入秘密日志…</item>
+    </plurals>
     <string name="server_cleared">已清除上次服务器连接</string>
     <string name="notification_access">通知访问权限</string>
     <string name="notification_access_desc">媒体元数据所需</string>
@@ -55,11 +41,7 @@
 
     <!-- AudioCastService -->
     <string name="casting_to">正在投放到 %1$s (%2$s)</string>
-    <string name="casting_to_multiple">正在投放到 %1$d 个设备</string>
-    <string name="connecting_to">正在连接到 %1$s</string>
     <string name="not_casting">未在投放</string>
-    <string name="unknown">未知</string>
-    <string name="connecting">正在连接…</string>
     <!-- Packet Log Activity -->
     <string name="packet_logs">数据包日志</string>
     <string name="packet_logs_desc">查看用于调试的详细网络数据包日志</string>
