@@ -1,6 +1,7 @@
 package com.creolecast.app
 
 import com.creolecast.app.airplay2.BinaryPlist
+import com.creolecast.app.airplay2.StreamPlistParams
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -16,17 +17,20 @@ class AirPlay2CaptureRateTest {
         val captureRate = AudioCastService.captureSampleRate("AirPlay2")
         val decoded = BinaryPlist.decode(
             BinaryPlist.makeStreamPlist(
-                controlPort = 6001,
-                shk = null,
-                streamConnectionId = 1L,
-                sampleRate = captureRate,
-                spf = 352,
-                latencyMin = 0L,
-                latencyMax = 3748L,
-                useStreamConnections = true
+                StreamPlistParams(
+                    controlPort = 6001,
+                    shk = null,
+                    streamConnectionId = 1L,
+                    sampleRate = captureRate,
+                    spf = 352,
+                    latencyMin = 0L,
+                    latencyMax = 3748L,
+                    useStreamConnections = true
+                )
             )
         )
-        val stream = (decoded["streams"] as List<*>).single() as Map<*, *>
+        val streams = decoded["streams"] as? List<*> ?: error("SETUP plist has no streams array")
+        val stream = streams.single() as? Map<*, *> ?: error("streams entry is not a dictionary")
         assertEquals("audioFormat must stay ALAC/44100/16/2", 0x40000L, stream["audioFormat"])
         assertEquals("sr must match the ALAC/44100 audioFormat", 44100L, stream["sr"])
     }

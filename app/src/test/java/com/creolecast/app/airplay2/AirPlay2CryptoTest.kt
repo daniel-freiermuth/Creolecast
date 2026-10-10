@@ -1,11 +1,12 @@
 package com.creolecast.app.airplay2
 
+import org.bouncycastle.crypto.InvalidCipherTextException
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 class AirPlay2CryptoTest {
@@ -52,7 +53,7 @@ class AirPlay2CryptoTest {
         val nonce = ByteArray(12)
         val plaintext = "secret".toByteArray()
         val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(key, nonce, plaintext, ByteArray(0))
-        try {
+        assertThrows(InvalidCipherTextException::class.java) {
             AirPlay2Crypto.chacha20Poly1305Decrypt(
                 ByteArray(32) {
                     0xFF.toByte()
@@ -62,8 +63,7 @@ class AirPlay2CryptoTest {
                 ByteArray(0),
                 tag
             )
-            fail("Expected authentication failure")
-        } catch (e: Exception) { /* expected */ }
+        }
     }
 
     @Test
