@@ -81,6 +81,10 @@ android {
         // "A newer version is available" would fail CI whenever an upstream releases,
         // independent of the change under test. Dependabot proposes updates instead.
         disable += setOf("NewerVersionAvailable", "GradleDependency", "AndroidGradlePluginVersion")
+        // Opt-in micro-optimisations without value here: debug logging stays in release builds
+        // on purpose (field diagnostics via logcat), and R8 inlines the small synthetic
+        // accessors Kotlin generates for private access from lambdas and nested classes.
+        disable += setOf("LogConditional", "SyntheticAccessor")
     }
     packaging {
         jniLibs { useLegacyPackaging = false }
