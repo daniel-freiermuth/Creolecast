@@ -7,7 +7,6 @@ import android.util.AttributeSet
 import android.view.View
 import androidx.core.content.ContextCompat
 import kotlin.math.log10
-import kotlin.math.sqrt
 
 class VisualizerView @JvmOverloads constructor(
     context: Context,
