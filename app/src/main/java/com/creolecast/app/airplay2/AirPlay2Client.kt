@@ -112,7 +112,11 @@ class AirPlay2Client(
     private var receiverSourceVersion = ""
     private var usePtp = false
     private var useStreamConnections = false
-    private var ptpTimelineId = 0L
+
+    /** PTP timeline our 0xd7 sync packets are stamped on. */
+    private val mediaClock = MediaClock()
+    /** Running only when the receiver follows our clock instead of publishing one. */
+    private var ptpMaster: PtpMaster? = null
 
 
     /** HAP control-channel encryption, enabled once pair-verify completes. */
@@ -162,6 +166,9 @@ class AirPlay2Client(
             if (!sendSetupStream()) return false
 
             setVolume(0.0)
+            // Before the first 0xd7 anchor: it ties the next RTP timestamp to "now",
+            // so audio must follow it immediately.
+            ptpMaster?.awaitReceiverLock()
 
             running = true
             if (!usePtp) startTimingResponder()
@@ -572,14 +579,36 @@ class AirPlay2Client(
             timingPeerAddress = localAddress
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
+        val receivedAt = System.nanoTime()
         if (resp.code != 200) { Log.e(TAG, "SETUP session failed: ${resp.code}"); return false }
         sessionId = resp.headers["Session"]?.substringBefore(";")?.trim()
             ?: sessionUuid.toString().uppercase()
-        resp.body?.let { parseSessionResponse(it) }
-        if (usePtp && ptpTimelineId == 0L) {
-            Log.e(TAG, "PTP SETUP response omitted timingPeerInfo.ClockID")
+        val clockId = resp.body?.let { parseSessionResponse(it) } ?: 0L
+        return !usePtp || configurePtpClock(clockId, resp.headers, receivedAt)
+    }
+
+    /**
+     * Receivers that publish a ClockID (Apple) own the timeline: follow it via
+     * their clock headers (mirror.go configurePTPClock). Receivers that don't
+     * (shairport-sync + nqptp) follow the sender, so become the PTP master.
+     */
+    private fun configurePtpClock(clockId: Long, headers: Map<String, String>, receivedAt: Long): Boolean {
+        if (clockId != 0L) {
+            if (!mediaClock.configureFromSetup(clockId, headers, receivedAt)) {
+                Log.d(TAG, "SETUP lacks receiver clock headers; local clock on timeline 0x${clockId.toULong().toString(16)}")
+                mediaClock.configureFromLocalClock(clockId)
+            }
+            return true
+        }
+        val master = PtpMaster(InetAddress.getByName(host), PtpMaster.clockIdFromDeviceId(deviceId))
+        try {
+            master.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Receiver needs a sender PTP clock but UDP 319/320 cannot be bound: ${e.message}")
             return false
         }
+        ptpMaster = master
+        mediaClock.configureFromLocalClock(master.clockId)
         return true
     }
 
@@ -610,6 +639,7 @@ class AirPlay2Client(
             useStreamConnections = useStreamConnections
         )
         val resp = sendRtspRequest("SETUP", sessionUrl, "application/x-apple-binary-plist", plist)
+        if (ptpMaster == null) mediaClock.reanchor(resp.headers, System.nanoTime())
         if (resp.code != 200) { Log.e(TAG, "SETUP stream failed: ${resp.code}"); return false }
 
         resp.body?.let { body ->
@@ -650,15 +680,15 @@ class AirPlay2Client(
         return port?.toInt()?.takeIf { it > 0 }
     }
 
-    private fun parseSessionResponse(body: ByteArray) {
-        try {
+    /** Returns the receiver's PTP ClockID, or 0 when it publishes none. */
+    private fun parseSessionResponse(body: ByteArray): Long {
+        return try {
             val dict = BinaryPlist.decode(body)
             (dict["eventPort"] as? Long)?.toInt()?.let { if (it > 0) eventPort = it }
-            // PTP sync packets must carry the receiver's clock identity.
-            ((dict["timingPeerInfo"] as? Map<*, *>)?.get("ClockID") as? Long)
-                ?.let { if (it != 0L) ptpTimelineId = it }
+            (dict["timingPeerInfo"] as? Map<*, *>)?.get("ClockID") as? Long ?: 0L
         } catch (e: Exception) {
             Log.w(TAG, "parseSessionResponse failed: ${e.message}")
+            0L
         }
     }
 
@@ -765,12 +795,12 @@ class AirPlay2Client(
 
     /**
      * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
-     * 28 bytes / 0xd7 plus the receiver's timeline id for PTP
-     * (audio.go sendSyncPacketAt).
+     * 28 bytes / 0xd7 plus the timeline id for PTP (audio.go sendSyncPacketAt).
+     * The frame at `rtpTimestamp - latency` is anchored to the network time.
      */
     private fun sendSyncPacket() {
         if (controlRemotePort <= 0) return
-        val networkTime = currentNtpTime()
+        val networkTime = if (usePtp) mediaClock.now() ?: return else currentNtpTime()
         val packet = ByteArray(if (usePtp) 28 else 20)
         packet[0] = (if (syncPacketSent) 0x80 else 0x90).toByte()
         packet[1] = (if (usePtp) 0xD7 else 0xD4).toByte()
@@ -781,7 +811,7 @@ class AirPlay2Client(
         if (usePtp) {
             writeUInt64(packet, 8, ptpNanoseconds(networkTime))
             writeUInt32(packet, 16, rtpTimestamp)
-            writeUInt64(packet, 20, ptpTimelineId)
+            writeUInt64(packet, 20, mediaClock.timelineId)
         } else {
             writeUInt64(packet, 8, networkTime)
             writeUInt32(packet, 16, rtpTimestamp)
@@ -971,6 +1001,8 @@ class AirPlay2Client(
         syncThread?.interrupt()
         keepAliveThread?.interrupt()
         timingThread?.interrupt()
+        ptpMaster?.close()
+        ptpMaster = null
         audioSocket?.close()
         try { eventSocket?.close() } catch (_: Exception) {}
         controlSocket.close()
@@ -987,11 +1019,17 @@ class AirPlay2Client(
         }
     }
 
-    /** POST /feedback every 2 s, matching the reference's feedbackLoop. */
+    /**
+     * POST /feedback every 2 s, matching the reference's feedbackLoop. Each reply
+     * re-anchors a receiver-owned PTP timeline (mirror.go feedbackLoop).
+     */
     private fun startKeepAliveLoop() {
         keepAliveThread = thread(name = "ap2-keepalive", isDaemon = true) {
             while (running) {
-                try { sendRequest("POST", "/feedback", null, null) } catch (_: Exception) {}
+                try {
+                    val resp = sendRequest("POST", "/feedback", null, null)
+                    if (usePtp && ptpMaster == null) mediaClock.reanchor(resp.headers, System.nanoTime())
+                } catch (_: Exception) {}
                 try { Thread.sleep(2000) } catch (e: InterruptedException) { return@thread }
             }
         }
