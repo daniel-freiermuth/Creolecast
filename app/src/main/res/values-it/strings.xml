@@ -1,41 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">OK</string>
     <string name="media_projection_denied">Permesso MediaProjection Negato</string>
     <string name="select_server_first">Scegli prima un server.</string>
-    <string name="scanning">Scansionando...</string>
+    <string name="scanning">Scansionando…</string>
     <string name="refresh">Ricerca</string>
     <string name="stop">Stop</string>
     <string name="start">Start</string>
-    <string name="home">Home</string>
-    <string name="audio">Audio</string>
-    <string name="devices">Dispositivi</string>
-    <string name="logs">Logs</string>
     <string name="status">Stato</string>
     <string name="disconnected">DISCONNESSO</string>
     <string name="connect">Connesso</string>
     <string name="servers">Servers</string>
-    <string name="ready_to_cast">Pronto a Trasmettere</string>
-    <string name="manual_entry">Connessione Manuale</string>
-    <string name="manual_entry_desc">Inserisci l\'IP del Server e la Porta</string>
-    <string name="ip_address">Indirizzo IP</string>
-    <string name="port">Porta</string>
-    <string name="add">Aggiungi</string>
     <string name="synchronization">Sincronizzazione</string>
-    <string name="create">Crea</string>
-    <string name="no_servers_found">Nessun server trovato</string>
-    <string name="grant_notification_permission">Concedi permesso notifiche</string>
     <string name="settings">Impostazioni</string>
     <string name="general">Generali</string>
     <string name="casting">Trasmissione</string>
     <string name="about">Dettagli</string>
-    <string name="version_format">Versione %1$s</string>
-    <string name="secret_logs_one_tap">Ancora un tap per accedere ai log segreti</string>
-    <string name="secret_logs_multiple_taps">Ancora %1$d tap per accedere ai log segreti...</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="one">Ancora un tap per accedere ai log segreti</item>
+        <item quantity="many">Ancora %1$d tap per accedere ai log segreti…</item>
+        <item quantity="other">Ancora %1$d tap per accedere ai log segreti…</item>
+    </plurals>
     <string name="server_cleared">Ultima connessione ripulita</string>
     <string name="notification_access">Accesso Notifiche</string>
     <string name="notification_access_desc">Richiesto per i metadati multimediali</string>
-    <string name="reset_last_server">Resetta l\'ultimo server</string>
+    <string name="reset_last_server">Resetta l’ultimo server</string>
     <string name="reset_last_server_desc">Pulisci i dettagli del server salvato</string>
 
     <!-- Protocols Activity -->
@@ -52,11 +40,7 @@
     <string name="cancel">Annulla</string>
 
     <string name="casting_to">Trasmettendo a %1$s (%2$s)</string>
-    <string name="casting_to_multiple">Trasmettendo a %1$d dispositivi</string>
-    <string name="connecting_to">Connettendo a %1$s</string>
     <string name="not_casting">Non stai Trasmettendo</string>
-    <string name="unknown">Sconosciuto</string>
-    <string name="connecting">Connessione in corso...</string>
     <string name="packet_logs">Log dei pacchetti</string>
     <string name="packet_logs_desc">Visualizza i log dettagliati dei pacchetti di rete per il debug</string>
     <string name="search_logs">Cerca Log</string>

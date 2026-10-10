@@ -25,14 +25,16 @@
                 android:id="@+id/hostText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceTitleMedium" />
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textIsSelectable="true" />
 
             <TextView
                 android:id="@+id/pinText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textAppearance="?attr/textAppearanceBodySmall"
-                android:textColor="?android:attr/textColorSecondary" />
+                android:textColor="?android:attr/textColorSecondary"
+                android:textIsSelectable="true" />
         </LinearLayout>
 
         <ImageButton
@@ -40,6 +42,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/edit_pin"
             android:src="@android:drawable/ic_menu_edit"
             app:tint="?attr/colorOnSurfaceVariant" />
 
@@ -48,6 +51,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/delete_pin"
             android:src="@android:drawable/ic_menu_delete"
             app:tint="?attr/colorError" />
 

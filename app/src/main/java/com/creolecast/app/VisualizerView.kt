@@ -15,7 +15,7 @@ class VisualizerView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private var bytes: ByteArray? = null
-    private var magnitudes: FloatArray = FloatArray(64)
+    private val magnitudes: FloatArray = FloatArray(NUM_BANDS)
 
     private val barPaint = Paint().apply {
         isAntiAlias = true
@@ -31,12 +31,12 @@ class VisualizerView @JvmOverloads constructor(
     }
 
     private fun processFrequencies(data: ByteArray) {
-        if (data.size < 128) return
+        if (data.size < MIN_FRAME_BYTES) return
 
         // Simple FFT-like approach: Calculate magnitudes for frequency bands
         // Since we don't have a full FFT library here, we'll use a simplified grouped average
         // to represent frequency distribution.
-        val numBands = 64
+        val numBands = NUM_BANDS
         val samplesPerBand = (data.size / 2) / numBands
 
         val newMagnitudes = FloatArray(numBands)
@@ -53,13 +53,13 @@ class VisualizerView @JvmOverloads constructor(
             }
             // Normalize and apply a simple logarithmic scale for better visualization
             val avg = sum / samplesPerBand
-            val scaled = (log10(avg.coerceAtLeast(1f)) / log10(32768f))
+            val scaled = (log10(avg.coerceAtLeast(1f)) / log10(PCM16_FULL_SCALE))
             newMagnitudes[i] = scaled.coerceIn(0f, 1f)
         }
 
         // Smooth transitions
         for (i in 0 until numBands) {
-            magnitudes[i] = magnitudes[i] * 0.6f + newMagnitudes[i] * 0.4f
+            magnitudes[i] = magnitudes[i] * SMOOTHING_KEEP + newMagnitudes[i] * SMOOTHING_NEW
         }
     }
 
@@ -90,5 +90,19 @@ class VisualizerView @JvmOverloads constructor(
             // Draw a rounded bar
             canvas.drawRoundRect(x, y, x + barWidth, height, 8f, 8f, barPaint)
         }
+    }
+
+    private companion object {
+        const val NUM_BANDS = 64
+
+        /** Fewer bytes than one 16-bit sample per band: nothing to draw. */
+        const val MIN_FRAME_BYTES = 128
+
+        /** Magnitude of the largest 16-bit PCM sample, used to normalise the log scale. */
+        const val PCM16_FULL_SCALE = 32768f
+
+        /** Exponential smoothing: weight of the previous frame vs. the new one. */
+        const val SMOOTHING_KEEP = 0.6f
+        const val SMOOTHING_NEW = 0.4f
     }
 }

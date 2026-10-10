@@ -9,6 +9,8 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
@@ -45,12 +47,15 @@ class AirPlayPinsActivity : AppCompatActivity() {
     private fun loadPins() {
         val sharedPreferences =
             getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
-        val allPrefs = sharedPreferences.all
-        val pins = allPrefs.filterKeys { it.startsWith("airplay2_pin_") }
-            .map { (key, value) ->
-                val host = key.removePrefix("airplay2_pin_")
-                host to value.toString()
+        // PINs are only ever written with putString, so every PIN entry holds a String.
+        val pins = sharedPreferences.all.mapNotNull { (key, value) ->
+            val pin = value as? String
+            if (key.startsWith(PIN_KEY_PREFIX) && pin != null) {
+                key.removePrefix(PIN_KEY_PREFIX) to pin
+            } else {
+                null
             }
+        }
 
         adapter.submitList(pins)
         emptyStateText.visibility = if (pins.isEmpty()) View.VISIBLE else View.GONE
@@ -85,7 +90,7 @@ class AirPlayPinsActivity : AppCompatActivity() {
                             AudioCastService.SECURE_PREFS_NAME,
                             Context.MODE_PRIVATE
                         )
-                    sharedPreferences.edit().putString("airplay2_pin_$host", newPin).apply()
+                    sharedPreferences.edit { putString("$PIN_KEY_PREFIX$host", newPin) }
                     loadPins()
                 }
             }
@@ -100,7 +105,7 @@ class AirPlayPinsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.delete_pin) { _, _ ->
                 val sharedPreferences =
                     getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
-                sharedPreferences.edit().remove("airplay2_pin_$host").apply()
+                sharedPreferences.edit { remove("$PIN_KEY_PREFIX$host") }
                 loadPins()
             }
             .setNegativeButton(R.string.cancel, null)
@@ -115,8 +120,9 @@ class AirPlayPinsActivity : AppCompatActivity() {
         private var items = emptyList<Pair<String, String>>()
 
         fun submitList(newItems: List<Pair<String, String>>) {
+            val diff = DiffUtil.calculateDiff(PinDiff(items, newItems))
             items = newItems
-            notifyDataSetChanged()
+            diff.dispatchUpdatesTo(this)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -142,5 +148,25 @@ class AirPlayPinsActivity : AppCompatActivity() {
             val editButton: ImageButton = view.findViewById(R.id.editButton)
             val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
         }
+    }
+
+    /** Rows are keyed by host; a changed PIN for the same host is a content change. */
+    private class PinDiff(
+        private val oldItems: List<Pair<String, String>>,
+        private val newItems: List<Pair<String, String>>
+    ) : DiffUtil.Callback() {
+        override fun getOldListSize() = oldItems.size
+
+        override fun getNewListSize() = newItems.size
+
+        override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+            oldItems[oldItemPosition].first == newItems[newItemPosition].first
+
+        override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+            oldItems[oldItemPosition] == newItems[newItemPosition]
+    }
+
+    private companion object {
+        const val PIN_KEY_PREFIX = "airplay2_pin_"
     }
 }

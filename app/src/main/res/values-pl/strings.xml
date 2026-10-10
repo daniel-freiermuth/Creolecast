@@ -1,34 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="ok">OK</string>
     <string name="media_projection_denied">MediaProjection brak uprawnień.</string>
     <string name="select_server_first">Proszę najpierw zaznaczyć serwer.</string>
     <string name="scanning">Skanowanie…</string>
     <string name="refresh">Odśwież</string>
     <string name="stop">Stop</string>
     <string name="start">Start</string>
-    <string name="home">Strona główna</string>
-    <string name="devices">Urządzenia</string>
-    <string name="logs">Logi</string>
     <string name="status">Status</string>
     <string name="disconnected">ROZŁĄCZONO</string>
     <string name="connect">Połącz</string>
     <string name="servers">Serwery</string>
-    <string name="ready_to_cast">Gotowy do castowania</string>
-    <string name="manual_entry_desc">Wpisz IP oraz Port serwera</string>
-    <string name="ip_address">Adres IP</string>
-    <string name="port">Port</string>
-    <string name="add">Dodaj</string>
     <string name="synchronization">Synchronizacja</string>
-    <string name="create">Utwórz</string>
-    <string name="no_servers_found">Nie odnaleziono serwerów</string>
-    <string name="grant_notification_permission">Przyznaj uprawnienia do powiadomień</string>
     <string name="settings">Ustawienia</string>
     <string name="general">Główne</string>
     <string name="about">O</string>
-    <string name="version_format">Wersja %1$s</string>
-    <string name="secret_logs_one_tap">Jeszcze jedno stuknięcie, aby przejść do tajnych logów…</string>
-    <string name="secret_logs_multiple_taps">%1$d więcej stuknięć, aby uzyskać dostęp do tajnych logów…</string>
+    <plurals name="secret_logs_remaining_taps">
+        <item quantity="one">Jeszcze jedno stuknięcie, aby przejść do tajnych logów…</item>
+        <item quantity="few">Jeszcze %1$d stuknięcia, aby przejść do tajnych logów…</item>
+        <item quantity="many">Jeszcze %1$d stuknięć, aby przejść do tajnych logów…</item>
+        <item quantity="other">Jeszcze %1$d stuknięcia, aby przejść do tajnych logów…</item>
+    </plurals>
     <string name="server_cleared">Ostatnie połączenie z serwerem zostało zakończone</string>
     <string name="notification_access">Dostęp do powiadomień</string>
     <string name="notification_access_desc">Wymagane dla metadanych multimediów</string>
@@ -47,11 +38,7 @@
     <string name="airplay2_protocol_desc">Przesyłaj strumieniowo na komputery Mac, urządzenia Apple TV i HomePod</string>
     <string name="cancel">Anuluj</string>
     <string name="casting_to">Przesyłanie do %1$s (%2$s)</string>
-    <string name="casting_to_multiple">Przesyłanie do %1$d urządzeń</string>
-    <string name="connecting_to">Łączenie z %1$s</string>
     <string name="not_casting">Brak przesyłania</string>
-    <string name="unknown">Nieznane</string>
-    <string name="connecting">Łączenie…</string>
     <string name="packet_logs">Dzienniki pakietów</string>
     <string name="packet_logs_desc">Wyświetl szczegółowe dzienniki pakietów sieciowych do debugowania</string>
     <string name="search_logs">Przeszukaj dzienniki…</string>
@@ -64,8 +51,6 @@
     <string name="no_pins_saved">Brak zapisanych kodów PIN</string>
     <string name="edit_pin">Edytuj kod PIN</string>
     <string name="delete_pin">Usuń kod PIN</string>
-    <string name="audio">Dźwięk</string>
-    <string name="manual_entry">Wprowadzanie ręczne</string>
     <string name="casting">Przesyłanie</string>
     <string name="ariacast_protocol_desc">Natywny protokół przesyłania hi-fi</string>
 </resources>

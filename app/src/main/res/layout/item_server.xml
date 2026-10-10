@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginHorizontal="8dp"
@@ -21,18 +22,21 @@
             android:layout_height="56dp"
             android:scaleType="centerCrop"
             android:src="@android:drawable/ic_menu_slideshow"
+            android:importantForAccessibility="no"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small"
             app:tint="?attr/colorPrimary" />
 
+        <!-- The whole row is clickable (selects the server); selectable text would steal the tap. -->
         <TextView
             android:id="@+id/serverName"
+            tools:ignore="SelectableText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
-            android:text="Server Name"
+            tools:text="Server Name"
             android:textAppearance="?attr/textAppearanceTitleMedium"
             android:textColor="?attr/colorOnBackground"
             android:textStyle="bold"
@@ -42,12 +46,14 @@
             app:layout_constraintBottom_toTopOf="@id/serverHost"
             app:layout_constraintVertical_chainStyle="packed"/>
 
+        <!-- The whole row is clickable (selects the server); selectable text would steal the tap. -->
         <TextView
             android:id="@+id/serverHost"
+            tools:ignore="SelectableText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
-            android:text="192.168.1.1"
+            tools:text="192.168.1.1"
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?android:attr/textColorSecondary"
             app:layout_constraintEnd_toStartOf="@+id/moreButton"
@@ -60,6 +66,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/remove_server"
             android:src="@android:drawable/ic_menu_more"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"

@@ -17,7 +17,6 @@
     <color name="md_theme_onTertiaryContainer">#2A1900</color>
 
     <color name="md_theme_background">#FFFBFF</color>
-    <color name="md_theme_onBackground">#201A1B</color>
     <color name="md_theme_surface">#FFFBFF</color>
     <color name="md_theme_onSurface">#201A1B</color>
     <color name="md_theme_surfaceVariant">#F4DDDF</color>
@@ -29,7 +28,4 @@
     <!-- UI Colors used in MainActivity -->
     <color name="light_grey">#E0E0E0</color>
     <color name="surface_card">#F5F5F5</color>
-
-    <color name="white">#FFFFFFFF</color>
-    <color name="black">#FF000000</color>
 </resources>
