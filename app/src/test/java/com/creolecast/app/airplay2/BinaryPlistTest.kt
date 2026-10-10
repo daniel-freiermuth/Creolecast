@@ -120,11 +120,12 @@ class BinaryPlistTest {
             )
         )
         assertEquals(50123L, decoded["eventPort"])
-        assertEquals(0x1122334455667788L, (decoded["timingPeerInfo"] as Map<*, *>)["ClockID"])
-        val stream = (decoded["streams"] as List<*>).single() as Map<*, *>
-        assertEquals(96L, stream["type"])
-        assertEquals(6001L, stream["dataPort"])
-        assertEquals(6002L, stream["controlPort"])
+        val timingPeerInfo = decoded["timingPeerInfo"] as? Map<*, *>
+        assertEquals(0x1122334455667788L, timingPeerInfo?.get("ClockID"))
+        val stream = (decoded["streams"] as? List<*>)?.single() as? Map<*, *>
+        assertEquals(96L, stream?.get("type"))
+        assertEquals(6001L, stream?.get("dataPort"))
+        assertEquals(6002L, stream?.get("controlPort"))
     }
 
     @Test
@@ -170,13 +171,15 @@ class BinaryPlistTest {
         val uuid = java.util.UUID.randomUUID()
         val decoded = BinaryPlist.decode(
             BinaryPlist.makeSessionPlist(
-                sessionUuid = uuid,
-                deviceId = "AA:BB:CC:DD:EE:FF",
-                name = "CreoleCast",
-                model = "Linux",
-                sourceVersion = "280.33",
-                timingProtocol = "NTP",
-                timingPort = 12345
+                SessionPlistParams(
+                    sessionUuid = uuid,
+                    deviceId = "AA:BB:CC:DD:EE:FF",
+                    name = "CreoleCast",
+                    model = "Linux",
+                    sourceVersion = "280.33",
+                    timingProtocol = "NTP",
+                    timingPort = 12345
+                )
             )
         )
         assertEquals("AA:BB:CC:DD:EE:FF", decoded["deviceID"])
@@ -193,15 +196,17 @@ class BinaryPlistTest {
         val uuid = java.util.UUID.randomUUID()
         val decoded = BinaryPlist.decode(
             BinaryPlist.makeSessionPlist(
-                sessionUuid = uuid,
-                deviceId = "AA:BB:CC:DD:EE:FF",
-                name = "CreoleCast",
-                model = "Linux",
-                sourceVersion = "980.71.1",
-                timingProtocol = "PTP",
-                timingPort = 12345,
-                timingPeerId = "AA:BB:CC:DD:EE:FF",
-                timingPeerAddress = "192.168.1.5"
+                SessionPlistParams(
+                    sessionUuid = uuid,
+                    deviceId = "AA:BB:CC:DD:EE:FF",
+                    name = "CreoleCast",
+                    model = "Linux",
+                    sourceVersion = "980.71.1",
+                    timingProtocol = "PTP",
+                    timingPort = 12345,
+                    timingPeerId = "AA:BB:CC:DD:EE:FF",
+                    timingPeerAddress = "192.168.1.5"
+                )
             )
         )
         assertEquals("PTP", decoded["timingProtocol"])

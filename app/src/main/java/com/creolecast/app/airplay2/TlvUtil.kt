@@ -20,19 +20,23 @@ object TlvUtil {
     const val TLV_ACL = 0x12
     const val TLV_FLAGS = 0x13
 
+    // A TLV8 length field is one byte, so values longer than this are split.
+    private const val MAX_CHUNK_SIZE = 255
+    private const val TYPE_MASK = 0xFF
+
     // Standard HAP TLV8: type(1B) + length(1B, max 255) + value.
     // Values > 255 bytes are split into consecutive chunks of the same type.
     fun build(vararg pairs: Pair<Int, ByteArray>): ByteArray {
         val out = ByteArrayOutputStream()
         for ((type, value) in pairs) {
             if (value.isEmpty()) {
-                out.write(type and 0xFF)
+                out.write(type and TYPE_MASK)
                 out.write(0)
             } else {
                 var offset = 0
                 while (offset < value.size) {
-                    val chunkSize = minOf(255, value.size - offset)
-                    out.write(type and 0xFF)
+                    val chunkSize = minOf(MAX_CHUNK_SIZE, value.size - offset)
+                    out.write(type and TYPE_MASK)
                     out.write(chunkSize)
                     out.write(value, offset, chunkSize)
                     offset += chunkSize

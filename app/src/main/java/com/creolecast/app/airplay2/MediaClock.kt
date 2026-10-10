@@ -82,6 +82,10 @@ class MediaClock(private val nanoTime: () -> Long = System::nanoTime) {
 
     companion object {
         private const val NANOS_PER_SECOND = 1_000_000_000L
+        private const val NANOS_PER_MILLI = 1_000_000L
+
+        /** Largest millisecond count whose nanoseconds still fit in a Long. */
+        private const val MAX_HEADER_MILLIS = Long.MAX_VALUE / NANOS_PER_MILLI
 
         /** Nanoseconds -> 32.32 fixed-point seconds (mirror.go compactTimestamp). */
         fun compactTimestamp(nanos: Long): Long {
@@ -91,20 +95,29 @@ class MediaClock(private val nanoTime: () -> Long = System::nanoTime) {
             return (seconds shl 32) or fraction
         }
 
+        /** 32.32 fixed-point seconds -> nanoseconds (audio.go ptpNanoseconds). */
+        fun nanoseconds(timestamp: Long): Long {
+            val seconds = timestamp ushr 32
+            val fraction = timestamp and 0xFFFFFFFFL
+            return seconds * NANOS_PER_SECOND + (fraction * NANOS_PER_SECOND ushr 32)
+        }
+
         /**
          * Receiver time at which it answered: request-received timestamp plus
          * processing time, both in milliseconds (mirror.go receiverClockTimestamp).
+         * Null unless both headers are present, non-negative and their sum fits.
          */
         fun receiverClockTimestamp(headers: Map<String, String>): Long? {
             fun header(name: String) = headers.entries.firstOrNull {
                 it.key.equals(name, ignoreCase = true)
-            }?.value?.trim()
-            val received = header("X-Apple-RequestReceivedTimestamp")?.toLongOrNull() ?: return null
-            val processing = header("X-Apple-ProcessingTime")?.toLongOrNull() ?: return null
-            if (received < 0 || processing < 0) return null
-            val maxMillis = Long.MAX_VALUE / 1_000_000L
-            if (received > maxMillis || processing > maxMillis - received) return null
-            return compactTimestamp((received + processing) * 1_000_000L)
+            }?.value?.trim()?.toLongOrNull()
+            val received = header("X-Apple-RequestReceivedTimestamp")
+            val processing = header("X-Apple-ProcessingTime")
+            val valid = received != null &&
+                processing != null &&
+                received in 0..MAX_HEADER_MILLIS &&
+                processing in 0..(MAX_HEADER_MILLIS - received)
+            return if (valid) compactTimestamp((received + processing) * NANOS_PER_MILLI) else null
         }
     }
 }
