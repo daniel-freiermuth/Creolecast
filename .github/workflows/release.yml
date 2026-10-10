@@ -134,8 +134,10 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
 
-          build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          unsigned=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          build_tools_dirs=("$ANDROID_HOME"/build-tools/*)
+          build_tools=$(printf '%s\n' "${build_tools_dirs[@]}" | sort -V | tail -1)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          unsigned=${release_apks[0]}
           out="app/build/outputs/apk/release/CreoleCast-${VERSION}.apk"
 
           # F-Droid copies the signature onto its own build, so the payload must
