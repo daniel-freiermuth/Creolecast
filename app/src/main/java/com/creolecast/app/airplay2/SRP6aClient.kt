@@ -21,8 +21,12 @@ class SRP6aClient(
         val g: BigInteger = SRP6StandardGroups.rfc5054_3072.g
         private const val PUBKEY_3072_SIZE = 384
 
-        /** tlvFlags value for transient pairing: uint32 LE 0x00000010 (pairing.go:339-340). */
-        private val TRANSIENT_FLAGS = byteArrayOf(0x10, 0x00, 0x00, 0x00)
+        /**
+         * Flags TLV for transient pairing: the single byte 0x10. HAP TLV integers are
+         * minimal-length, and shairport-sync's pair_ap only recognises transient when
+         * the value is exactly one byte; a 4-byte uint32 is treated as full pairing.
+         */
+        private val TRANSIENT_FLAGS = byteArrayOf(0x10)
 
         /** OPACK `{"com.apple.ScreenCapture": true}` (pairing.go screenCaptureACL). */
         private val SCREEN_CAPTURE_ACL =
@@ -46,8 +50,8 @@ class SRP6aClient(
 
     /**
      * M1. Transient pairing additionally carries the flags TLV; without it the
-     * receiver treats the exchange as a full PIN pairing and rejects the empty
-     * password (pairing.go:337-352).
+     * receiver treats the exchange as a full PIN pairing and rejects the fixed
+     * transient password.
      */
     fun buildM1(transient: Boolean): ByteArray {
         return if (transient) {
