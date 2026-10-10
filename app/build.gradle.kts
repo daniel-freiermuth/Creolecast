@@ -87,6 +87,13 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        // Every Kotlin compiler warning (deprecations, redundant checks, ...) fails the build.
+        allWarningsAsErrors = true
+    }
+}
+
 // Static analysis: every detekt rule (allRules), with type resolution via detektMain /
 // detektTest. Deviations live in config/detekt/detekt.yml; pre-existing findings are
 // grandfathered in the baseline files, so only new code has to be clean.

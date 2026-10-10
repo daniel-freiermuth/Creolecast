@@ -203,7 +203,7 @@ class MediaNotificationListener : NotificationListenerService() {
         val playbackState = controller.playbackState
 
         val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
-        val position = if (isPlaying && playbackState != null) {
+        val position = if (isPlaying) {
             val timeDiff = SystemClock.elapsedRealtime() - playbackState.lastPositionUpdateTime
             playbackState.position + (timeDiff * playbackState.playbackSpeed).toLong()
         } else {
