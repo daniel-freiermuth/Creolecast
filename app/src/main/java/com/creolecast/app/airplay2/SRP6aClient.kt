@@ -1,9 +1,9 @@
 package com.creolecast.app.airplay2
 
-import org.bouncycastle.crypto.agreement.srp.SRP6StandardGroups
-import org.bouncycastle.crypto.digests.SHA512Digest
 import java.math.BigInteger
 import java.security.SecureRandom
+import org.bouncycastle.crypto.agreement.srp.SRP6StandardGroups
+import org.bouncycastle.crypto.digests.SHA512Digest
 
 /**
  * SRP-6a (RFC 5054 3072-bit group, SHA-512) as HomeKit/AirPlay 2 uses it for
@@ -30,7 +30,11 @@ class SRP6aClient(
 
         /** OPACK `{"com.apple.ScreenCapture": true}` (pairing.go screenCaptureACL). */
         private val SCREEN_CAPTURE_ACL =
-            byteArrayOf(0xE1.toByte(), 0x57) + "com.apple.ScreenCapture".toByteArray(Charsets.UTF_8) + byteArrayOf(0x01)
+            byteArrayOf(
+                0xE1.toByte(),
+                0x57
+            ) + "com.apple.ScreenCapture".toByteArray(Charsets.UTF_8) +
+                byteArrayOf(0x01)
     }
 
     private val digest = SHA512Digest()
@@ -53,19 +57,17 @@ class SRP6aClient(
      * receiver treats the exchange as a full PIN pairing and rejects the fixed
      * transient password.
      */
-    fun buildM1(transient: Boolean): ByteArray {
-        return if (transient) {
-            TlvUtil.build(
-                TlvUtil.TLV_METHOD to byteArrayOf(0),
-                TlvUtil.TLV_STATE to byteArrayOf(1),
-                TlvUtil.TLV_FLAGS to TRANSIENT_FLAGS
-            )
-        } else {
-            TlvUtil.build(
-                TlvUtil.TLV_METHOD to byteArrayOf(0),
-                TlvUtil.TLV_STATE to byteArrayOf(1)
-            )
-        }
+    fun buildM1(transient: Boolean): ByteArray = if (transient) {
+        TlvUtil.build(
+            TlvUtil.TLV_METHOD to byteArrayOf(0),
+            TlvUtil.TLV_STATE to byteArrayOf(1),
+            TlvUtil.TLV_FLAGS to TRANSIENT_FLAGS
+        )
+    } else {
+        TlvUtil.build(
+            TlvUtil.TLV_METHOD to byteArrayOf(0),
+            TlvUtil.TLV_STATE to byteArrayOf(1)
+        )
     }
 
     fun processM2(m2Tlv: ByteArray): ByteArray? {
@@ -201,7 +203,12 @@ class SRP6aClient(
         val nonce = ByteArray(12)
         System.arraycopy("PS-Msg05".toByteArray(Charsets.UTF_8), 0, nonce, 4, 8)
 
-        val (ciphertext, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(encKey, nonce, subTlv, ByteArray(0))
+        val (ciphertext, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
+            encKey,
+            nonce,
+            subTlv,
+            ByteArray(0)
+        )
 
         return TlvUtil.build(
             TlvUtil.TLV_ENCRYPTED_DATA to (ciphertext + tag),

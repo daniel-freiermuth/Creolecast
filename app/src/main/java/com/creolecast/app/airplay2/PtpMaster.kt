@@ -43,7 +43,7 @@ class PtpMaster(
         private const val MSG_SYNC = 0x0
         private const val MSG_FOLLOW_UP = 0x8
         private const val MSG_ANNOUNCE = 0xB
-        private const val TRANSPORT_SPECIFIC = 0x10   // 802.1AS
+        private const val TRANSPORT_SPECIFIC = 0x10 // 802.1AS
         private const val HEADER_SIZE = 34
         private const val SYNC_INTERVAL_MS = 125L
         private const val SYNCS_PER_ANNOUNCE = 2
@@ -68,6 +68,7 @@ class PtpMaster(
     private var eventSocket: DatagramSocket? = null
     private var generalSocket: DatagramSocket? = null
     private var worker: Thread? = null
+
     @Volatile private var running = false
     private var syncSequence = 0
     private var announceSequence = 0
@@ -76,7 +77,12 @@ class PtpMaster(
     /** Bind 319/320 and start sending. Throws if either port cannot be bound. */
     fun start() {
         val event = bind(EVENT_PORT)
-        val general = try { bind(GENERAL_PORT) } catch (e: Exception) { event.close(); throw e }
+        val general = try {
+            bind(GENERAL_PORT)
+        } catch (e: Exception) {
+            event.close()
+            throw e
+        }
         eventSocket = event
         generalSocket = general
         running = true
@@ -114,7 +120,11 @@ class PtpMaster(
                 if (running) Log.w(TAG, "send failed: ${e.message}")
             }
             tick++
-            try { Thread.sleep(SYNC_INTERVAL_MS) } catch (_: InterruptedException) { return }
+            try {
+                Thread.sleep(SYNC_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                return
+            }
         }
     }
 
@@ -123,15 +133,20 @@ class PtpMaster(
     }
 
     private fun header(
-        message: ByteArray, type: Int, flags: Int, sequence: Int, control: Int, logPeriod: Int
+        message: ByteArray,
+        type: Int,
+        flags: Int,
+        sequence: Int,
+        control: Int,
+        logPeriod: Int
     ) {
         message[0] = (TRANSPORT_SPECIFIC or type).toByte()
-        message[1] = 0x02                                  // PTP version 2
+        message[1] = 0x02 // PTP version 2
         putU16(message, 2, message.size)
         // domain 0, reserved, correctionField 0, reserved: already zero
         putU16(message, 6, flags)
-        putU64(message, 20, clockId)                       // sourcePortIdentity.clockIdentity
-        putU16(message, 28, 1)                             // sourcePortIdentity.portNumber
+        putU64(message, 20, clockId) // sourcePortIdentity.clockIdentity
+        putU16(message, 28, 1) // sourcePortIdentity.portNumber
         putU16(message, 30, sequence and 0xFFFF)
         message[32] = control.toByte()
         message[33] = logPeriod.toByte()
@@ -150,7 +165,9 @@ class PtpMaster(
         val tlv = HEADER_SIZE + 10
         putU16(it, tlv, 0x0003)
         putU16(it, tlv + 2, 28)
-        it[tlv + 4] = 0x00; it[tlv + 5] = 0x80.toByte(); it[tlv + 6] = 0xC2.toByte()
+        it[tlv + 4] = 0x00
+        it[tlv + 5] = 0x80.toByte()
+        it[tlv + 6] = 0xC2.toByte()
         it[tlv + 9] = 0x01
     }
 
@@ -158,13 +175,13 @@ class PtpMaster(
         header(it, MSG_ANNOUNCE, 0x0008, sequence, control = 5, logPeriod = -2)
         val body = HEADER_SIZE
         // originTimestamp (10 bytes) left zero
-        putU16(it, body + 10, 37)                          // currentUtcOffset
-        it[body + 13] = 248.toByte()                       // grandmasterPriority1
-        putU32(it, body + 14, 0xF8FE436AL)                 // clockClass 248, accuracy unknown
-        it[body + 18] = 248.toByte()                       // grandmasterPriority2
-        putU64(it, body + 19, clockId)                     // grandmasterIdentity
-        putU16(it, body + 27, 0)                           // stepsRemoved
-        it[body + 29] = 0xA0.toByte()                      // timeSource: internal oscillator
+        putU16(it, body + 10, 37) // currentUtcOffset
+        it[body + 13] = 248.toByte() // grandmasterPriority1
+        putU32(it, body + 14, 0xF8FE436AL) // clockClass 248, accuracy unknown
+        it[body + 18] = 248.toByte() // grandmasterPriority2
+        putU64(it, body + 19, clockId) // grandmasterIdentity
+        putU16(it, body + 27, 0) // stepsRemoved
+        it[body + 29] = 0xA0.toByte() // timeSource: internal oscillator
     }
 
     /** 48-bit seconds + 32-bit nanoseconds. */
@@ -176,7 +193,8 @@ class PtpMaster(
     }
 
     private fun putU16(buf: ByteArray, off: Int, v: Int) {
-        buf[off] = (v ushr 8).toByte(); buf[off + 1] = v.toByte()
+        buf[off] = (v ushr 8).toByte()
+        buf[off + 1] = v.toByte()
     }
 
     private fun putU32(buf: ByteArray, off: Int, v: Long) {

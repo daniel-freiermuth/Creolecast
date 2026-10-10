@@ -1,6 +1,5 @@
 package com.creolecast.app.raop
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.Security
@@ -8,6 +7,7 @@ import java.security.spec.RSAPublicKeySpec
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 class RaopCrypto {
     companion object {
@@ -43,7 +43,10 @@ class RaopCrypto {
             val publicKey = factory.generatePublic(spec)
 
             // RAOP uses RSA-OAEP with SHA-1
-            val cipher = Cipher.getInstance("RSA/None/OAEPWithSHA1AndMGF1Padding", Security.getProvider("BC"))
+            val cipher = Cipher.getInstance(
+                "RSA/None/OAEPWithSHA1AndMGF1Padding",
+                Security.getProvider("BC")
+            )
             cipher.init(Cipher.ENCRYPT_MODE, publicKey)
             return cipher.doFinal(aesKey)
         }
@@ -64,7 +67,7 @@ class RaopCrypto {
     fun encryptAudio(data: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/CBC/NoPadding", Security.getProvider("BC"))
         cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
-        
+
         return if (data.size % 16 == 0) {
             cipher.doFinal(data)
         } else {

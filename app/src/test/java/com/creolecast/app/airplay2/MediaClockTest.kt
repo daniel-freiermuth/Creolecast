@@ -16,7 +16,8 @@ class MediaClockTest {
         "X-Apple-ProcessingTime" to processingMs.toString()
     )
 
-    private fun seconds(timestamp: Long) = (timestamp ushr 32).toDouble() + (timestamp and 0xFFFFFFFFL) / 4294967296.0
+    private fun seconds(timestamp: Long) =
+        (timestamp ushr 32).toDouble() + (timestamp and 0xFFFFFFFFL) / 4294967296.0
 
     @Test
     fun `compactTimestamp encodes 32_32 fixed point seconds`() {
@@ -42,7 +43,10 @@ class MediaClockTest {
 
     @Test
     fun `clock headers are matched case-insensitively`() {
-        val lower = mapOf("x-apple-requestreceivedtimestamp" to "10", "x-apple-processingtime" to "0")
+        val lower = mapOf(
+            "x-apple-requestreceivedtimestamp" to "10",
+            "x-apple-processingtime" to "0"
+        )
         assertTrue(clock.configureFromSetup(1, lower, receivedAtNs = 0))
     }
 

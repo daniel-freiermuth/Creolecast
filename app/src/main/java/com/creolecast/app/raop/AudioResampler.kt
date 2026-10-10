@@ -29,7 +29,13 @@ class AudioResampler(
 
         for (i in 0 until totalTaps) {
             val x = i.toFloat() - center
-            val sinc = if (x == 0f) 1f else sin(PI.toFloat() * cutoff * x) / (PI.toFloat() * cutoff * x)
+            val sinc = if (x ==
+                0f
+            ) {
+                1f
+            } else {
+                sin(PI.toFloat() * cutoff * x) / (PI.toFloat() * cutoff * x)
+            }
             val window = 0.54f - 0.46f * cos(2f * PI.toFloat() * i / (totalTaps - 1))
             filter[i] = sinc * window
         }
@@ -58,7 +64,10 @@ class AudioResampler(
 
         while (inIdx < inputSamples) {
             for (c in 0 until channels) {
-                val sample = ((input[inIdx * 4 + c * 2 + 1].toInt() shl 8) or (input[inIdx * 4 + c * 2].toInt() and 0xFF)).toShort().toFloat()
+                val sample = (
+                    (input[inIdx * 4 + c * 2 + 1].toInt() shl 8) or
+                        (input[inIdx * 4 + c * 2].toInt() and 0xFF)
+                    ).toShort().toFloat()
                 for (i in tapsPerPhase - 1 downTo 1) {
                     history[c][i] = history[c][i - 1]
                 }

@@ -1,21 +1,21 @@
 package com.creolecast.app.airplay2
 
+import java.security.SecureRandom
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair
 import org.bouncycastle.crypto.agreement.X25519Agreement
 import org.bouncycastle.crypto.digests.SHA512Digest
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator
 import org.bouncycastle.crypto.generators.X25519KeyPairGenerator
+import org.bouncycastle.crypto.modes.ChaCha20Poly1305
+import org.bouncycastle.crypto.params.AEADParameters
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.params.HKDFParameters
+import org.bouncycastle.crypto.params.KeyParameter
 import org.bouncycastle.crypto.params.X25519KeyGenerationParameters
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
-import org.bouncycastle.crypto.modes.ChaCha20Poly1305
-import org.bouncycastle.crypto.params.AEADParameters
-import org.bouncycastle.crypto.params.KeyParameter
-import java.security.SecureRandom
 
 class AirPlay2Crypto {
 
@@ -26,7 +26,10 @@ class AirPlay2Crypto {
             return generator.generateKeyPair()
         }
 
-        fun curve25519Agree(privateKey: X25519PrivateKeyParameters, publicKey: ByteArray): ByteArray {
+        fun curve25519Agree(
+            privateKey: X25519PrivateKeyParameters,
+            publicKey: ByteArray
+        ): ByteArray {
             val agreement = X25519Agreement()
             agreement.init(privateKey)
             val shared = ByteArray(agreement.agreementSize)
@@ -68,7 +71,11 @@ class AirPlay2Crypto {
          * Conscrypt, so going through [javax.crypto.Cipher] failed on devices.
          */
         private fun chacha20Poly1305(
-            encrypt: Boolean, key: ByteArray, nonce: ByteArray, input: ByteArray, aad: ByteArray
+            encrypt: Boolean,
+            key: ByteArray,
+            nonce: ByteArray,
+            input: ByteArray,
+            aad: ByteArray
         ): ByteArray {
             val aead = ChaCha20Poly1305()
             aead.init(encrypt, AEADParameters(KeyParameter(key), 128, nonce, aad))
@@ -92,9 +99,8 @@ class AirPlay2Crypto {
             return seed
         }
 
-        fun ed25519PublicFromSeed(seed: ByteArray): ByteArray {
-            return Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded
-        }
+        fun ed25519PublicFromSeed(seed: ByteArray): ByteArray =
+            Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded
 
         fun ed25519SignWithSeed(seed: ByteArray, data: ByteArray): ByteArray {
             val signer = Ed25519Signer()
@@ -103,8 +109,7 @@ class AirPlay2Crypto {
             return signer.generateSignature()
         }
 
-        fun getPublicKeyBytes(keyPair: AsymmetricCipherKeyPair): ByteArray {
-            return (keyPair.public as X25519PublicKeyParameters).encoded
-        }
+        fun getPublicKeyBytes(keyPair: AsymmetricCipherKeyPair): ByteArray =
+            (keyPair.public as X25519PublicKeyParameters).encoded
     }
 }

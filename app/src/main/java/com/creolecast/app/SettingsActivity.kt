@@ -23,8 +23,6 @@ class SettingsActivity : AppCompatActivity() {
         setSupportActionBar(toolbar)
         toolbar.setNavigationOnClickListener { finish() }
 
-
-
         findViewById<View>(R.id.protocolsLayout).setOnClickListener {
             startActivity(Intent(this, ProtocolsActivity::class.java))
         }
@@ -33,11 +31,9 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, AirPlayPinsActivity::class.java))
         }
 
-
         findViewById<View>(R.id.notificationAccessLayout).setOnClickListener {
             showNotificationAccessExplanationDialog()
         }
-
 
         findViewById<View>(R.id.packetLogLayout).setOnClickListener {
             startActivity(Intent(this, PacketLogActivity::class.java))
@@ -51,13 +47,7 @@ class SettingsActivity : AppCompatActivity() {
             handlePacketLogClick()
             true
         }
-
-
-
-
     }
-
-
 
     private fun handlePacketLogClick() {
         val currentTime = System.currentTimeMillis()
@@ -83,7 +73,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun resetLastServer() {
-        val sharedPreferences = getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
+        val sharedPreferences =
+            getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
         sharedPreferences.edit().apply {
             remove(AudioCastService.KEY_LAST_SERVER_HOST)
             remove(AudioCastService.KEY_LAST_SERVER_PORT)
@@ -92,5 +83,4 @@ class SettingsActivity : AppCompatActivity() {
         }
         Toast.makeText(this, getString(R.string.server_cleared), Toast.LENGTH_SHORT).show()
     }
-
 }

@@ -170,8 +170,12 @@ class CastRouteProvider : MediaRoute2ProviderService() {
 
     // ── Session lifecycle (system-initiated via output picker) ───────────
 
-    override fun onCreateSession(requestId: Long, packageName: String, routeId: String,
-                                  sessionHints: android.os.Bundle?) {
+    override fun onCreateSession(
+        requestId: Long,
+        packageName: String,
+        routeId: String,
+        sessionHints: android.os.Bundle?
+    ) {
         Log.i(TAG, "onCreateSession: pkg=$packageName routeId=$routeId")
 
         // The user selected our route from the output picker.

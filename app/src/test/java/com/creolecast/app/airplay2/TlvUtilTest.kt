@@ -16,10 +16,12 @@ class TlvUtilTest {
     fun `build and parse multiple entries`() {
         val state = byteArrayOf(1)
         val method = byteArrayOf(0)
-        val parsed = TlvUtil.parse(TlvUtil.build(
-            TlvUtil.TLV_STATE to state,
-            TlvUtil.TLV_METHOD to method
-        ))
+        val parsed = TlvUtil.parse(
+            TlvUtil.build(
+                TlvUtil.TLV_STATE to state,
+                TlvUtil.TLV_METHOD to method
+            )
+        )
         assertArrayEquals(state, parsed[TlvUtil.TLV_STATE]?.firstOrNull())
         assertArrayEquals(method, parsed[TlvUtil.TLV_METHOD]?.firstOrNull())
     }
@@ -66,7 +68,7 @@ class TlvUtilTest {
         val built = TlvUtil.build(TlvUtil.TLV_PROOF to value)
         assertEquals(5, built.size)
         assertEquals(TlvUtil.TLV_PROOF, built[0].toInt() and 0xFF)
-        assertEquals(3, built[1].toInt() and 0xFF)  // 1-byte length
+        assertEquals(3, built[1].toInt() and 0xFF) // 1-byte length
         assertEquals(0x12.toByte(), built[2])
         assertEquals(0x34.toByte(), built[3])
         assertEquals(0x56.toByte(), built[4])

@@ -71,7 +71,5 @@ object TlvUtil {
         return result
     }
 
-    fun getFirst(data: ByteArray, type: Int): ByteArray? {
-        return parse(data)[type]?.firstOrNull()
-    }
+    fun getFirst(data: ByteArray, type: Int): ByteArray? = parse(data)[type]?.firstOrNull()
 }

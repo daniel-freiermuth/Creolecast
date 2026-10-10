@@ -34,7 +34,11 @@ class AirPlay2CryptoTest {
     @Test
     fun `chacha20 poly1305 tag is 16 bytes`() {
         val (_, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
-            ByteArray(32), ByteArray(12), ByteArray(32), ByteArray(0))
+            ByteArray(32),
+            ByteArray(12),
+            ByteArray(32),
+            ByteArray(0)
+        )
         assertEquals(16, tag.size)
     }
 
@@ -45,7 +49,15 @@ class AirPlay2CryptoTest {
         val plaintext = "secret".toByteArray()
         val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(key, nonce, plaintext, ByteArray(0))
         try {
-            AirPlay2Crypto.chacha20Poly1305Decrypt(ByteArray(32) { 0xFF.toByte() }, nonce, ct, ByteArray(0), tag)
+            AirPlay2Crypto.chacha20Poly1305Decrypt(
+                ByteArray(32) {
+                    0xFF.toByte()
+                },
+                nonce,
+                ct,
+                ByteArray(0),
+                tag
+            )
             fail("Expected authentication failure")
         } catch (e: Exception) { /* expected */ }
     }
@@ -54,7 +66,12 @@ class AirPlay2CryptoTest {
     fun `chacha20 poly1305 empty plaintext round trips`() {
         val key = ByteArray(32) { 0x11 }
         val nonce = ByteArray(12) { 0x22.toByte() }
-        val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(key, nonce, ByteArray(0), ByteArray(0))
+        val (ct, tag) = AirPlay2Crypto.chacha20Poly1305Encrypt(
+            key,
+            nonce,
+            ByteArray(0),
+            ByteArray(0)
+        )
         val decrypted = AirPlay2Crypto.chacha20Poly1305Decrypt(key, nonce, ct, ByteArray(0), tag)
         assertArrayEquals(ByteArray(0), decrypted)
     }
@@ -97,7 +114,9 @@ class AirPlay2CryptoTest {
         val seed = AirPlay2Crypto.generateEd25519Seed()
         val msg = "AirPlay 2 pairing".toByteArray(Charsets.UTF_8)
         val sig = AirPlay2Crypto.ed25519SignWithSeed(seed, msg)
-        assertTrue(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed), msg, sig))
+        assertTrue(
+            AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed), msg, sig)
+        )
         assertEquals(64, sig.size)
     }
 
@@ -107,7 +126,9 @@ class AirPlay2CryptoTest {
         val seed2 = AirPlay2Crypto.generateEd25519Seed()
         val msg = "test".toByteArray()
         val sig = AirPlay2Crypto.ed25519SignWithSeed(seed1, msg)
-        assertFalse(AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed2), msg, sig))
+        assertFalse(
+            AirPlay2Crypto.ed25519Verify(AirPlay2Crypto.ed25519PublicFromSeed(seed2), msg, sig)
+        )
     }
 
     @Test
@@ -116,7 +137,9 @@ class AirPlay2CryptoTest {
         val sig = AirPlay2Crypto.ed25519SignWithSeed(seed, "original".toByteArray())
         assertFalse(
             AirPlay2Crypto.ed25519Verify(
-                AirPlay2Crypto.ed25519PublicFromSeed(seed), "tampered".toByteArray(), sig
+                AirPlay2Crypto.ed25519PublicFromSeed(seed),
+                "tampered".toByteArray(),
+                sig
             )
         )
     }
@@ -151,9 +174,13 @@ class AirPlay2CryptoTest {
         val kp1 = AirPlay2Crypto.generateCurve25519KeyPair()
         val kp2 = AirPlay2Crypto.generateCurve25519KeyPair()
         val shared1 = AirPlay2Crypto.curve25519Agree(
-            kp1.private as X25519PrivateKeyParameters, AirPlay2Crypto.getPublicKeyBytes(kp2))
+            kp1.private as X25519PrivateKeyParameters,
+            AirPlay2Crypto.getPublicKeyBytes(kp2)
+        )
         val shared2 = AirPlay2Crypto.curve25519Agree(
-            kp2.private as X25519PrivateKeyParameters, AirPlay2Crypto.getPublicKeyBytes(kp1))
+            kp2.private as X25519PrivateKeyParameters,
+            AirPlay2Crypto.getPublicKeyBytes(kp1)
+        )
         assertArrayEquals(shared1, shared2)
         assertEquals(32, shared1.size)
     }
@@ -179,6 +206,9 @@ class AirPlay2CryptoTest {
         assertFalse(counterNonce(65535).contentEquals(counterNonce(65536)))
 
         // Regression proof: old sequence nonce repeats at 65536 (65536 & 0xFFFF = 0)
-        assertTrue("Old nonce wraps at 65536", oldSeqNonce(0).contentEquals(oldSeqNonce(65536 and 0xFFFF)))
+        assertTrue(
+            "Old nonce wraps at 65536",
+            oldSeqNonce(0).contentEquals(oldSeqNonce(65536 and 0xFFFF))
+        )
     }
 }

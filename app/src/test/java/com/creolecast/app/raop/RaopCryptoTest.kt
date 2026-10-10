@@ -22,7 +22,7 @@ class RaopCryptoTest {
         val data = ByteArray(16) { 0x00.toByte() }
         val encrypted1 = crypto.encryptAudio(data)
         val encrypted2 = crypto.encryptAudio(data)
-        
+
         // In RAOP, IV is reset for every packet, so same data should give same ciphertext
         assertArrayEquals(encrypted1, encrypted2)
         assertNotEquals(data[0], encrypted1[0])

@@ -11,7 +11,10 @@ class AndroidCredentialStore(private val prefs: SharedPreferences) : AirPlay2Cre
     override fun load(deviceId: String): AirPlay2Credentials? {
         return try {
             val stored = prefs.getString(keyFor(deviceId), null) ?: return null
-            val parts = String(Base64.decode(stored, Base64.NO_WRAP), Charsets.UTF_8).split('\u0000')
+            val parts = String(
+                Base64.decode(stored, Base64.NO_WRAP),
+                Charsets.UTF_8
+            ).split('\u0000')
             if (parts.size != 3) return null
             val pairingId = parts[0]
             val seed = Base64.decode(parts[1], Base64.NO_WRAP)

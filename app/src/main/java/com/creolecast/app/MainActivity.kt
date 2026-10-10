@@ -68,12 +68,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverListAdapter: ServerAdapter
     private lateinit var sharedPreferences: SharedPreferences
 
-
     private val _audioCastServiceFlow = MutableStateFlow<AudioCastService?>(null)
     val audioCastServiceFlow = _audioCastServiceFlow.asStateFlow()
 
     private val _refreshTrigger = MutableStateFlow(0)
-    
+
     private val activeTouchHosts = mutableSetOf<String>()
 
     private var currentCardAnimator: ValueAnimator? = null
@@ -109,9 +108,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val startMediaProjection = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == Activity.RESULT_OK && it.data != null) {
-            val server = selectedServer ?: return@registerForActivityResult
+    private val startMediaProjection =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (it.resultCode == Activity.RESULT_OK && it.data != null) {
+                val server = selectedServer ?: return@registerForActivityResult
                 val serviceIntent = Intent(this, AudioCastService::class.java).apply {
                     action = AudioCastService.ACTION_START
                     putExtra(AudioCastService.EXTRA_MEDIA_PROJECTION_TOKEN, it.data)
@@ -122,33 +122,49 @@ class MainActivity : AppCompatActivity() {
                     putExtra("com.creolecast.app.EXTRA_SERVER_EXTRA", server.extra)
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
-        } else {
-            Toast.makeText(this, getString(R.string.media_projection_denied), Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(
+                    this,
+                    getString(R.string.media_projection_denied),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
-    }
 
-
-    private val requestCastPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        val recordAudioGranted = grants[Manifest.permission.RECORD_AUDIO]
-            ?: (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-        if (recordAudioGranted) {
-            startMediaProjection.launch(mediaProjectionManager.createScreenCaptureIntent())
-        } else if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
-            // System won't show the request dialog again (permanently denied, or a device
-            // policy) - re-requesting from here on is a silent no-op, so the only way
-            // back in is the app's own Settings page.
-            showOpenSettingsForPermissionDialog()
-        } else {
-            Toast.makeText(this, getString(R.string.record_audio_permission_required), Toast.LENGTH_LONG).show()
+    private val requestCastPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val recordAudioGranted = grants[Manifest.permission.RECORD_AUDIO]
+                ?: (
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                        PackageManager.PERMISSION_GRANTED
+                    )
+            if (recordAudioGranted) {
+                startMediaProjection.launch(mediaProjectionManager.createScreenCaptureIntent())
+            } else if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+                // System won't show the request dialog again (permanently denied, or a device
+                // policy) - re-requesting from here on is a silent no-op, so the only way
+                // back in is the app's own Settings page.
+                showOpenSettingsForPermissionDialog()
+            } else {
+                Toast.makeText(
+                    this,
+                    getString(R.string.record_audio_permission_required),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
-    }
 
     private fun showOpenSettingsForPermissionDialog() {
         MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.record_audio_permission_required))
             .setMessage(getString(R.string.record_audio_permission_permanently_denied))
             .setPositiveButton(getString(R.string.settings)) { _, _ ->
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", packageName, null)
+                    )
+                )
             }
             .setNegativeButton(getString(R.string.cancel), null)
             .show()
@@ -156,10 +172,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun beginCast() {
         val permissionsNeeded = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
             permissionsNeeded.add(Manifest.permission.RECORD_AUDIO)
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
             permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (permissionsNeeded.isNotEmpty()) {
@@ -174,18 +194,17 @@ class MainActivity : AppCompatActivity() {
         beginCast()
     }
 
-
-
     override fun onCreate(savedInstanceState: Bundle?) {
         sharedPreferences = getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
-        
+
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         val toolbar = findViewById<Toolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
 
-        mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjectionManager =
+            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         discoveryManager = (application as CreoleCastApp).discoveryManager
 
         stateTextView = findViewById(R.id.stateTextView)
@@ -213,7 +232,6 @@ class MainActivity : AppCompatActivity() {
             layoutManager = LinearLayoutManager(this@MainActivity)
         }
 
-
         castButton.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             if (audioCastService?.state?.value == CastState.CASTING) {
@@ -225,7 +243,11 @@ class MainActivity : AppCompatActivity() {
                 if (selectedServer != null) {
                     beginCast()
                 } else {
-                    Toast.makeText(this, getString(R.string.select_server_first), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this,
+                        getString(R.string.select_server_first),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         }
@@ -236,18 +258,22 @@ class MainActivity : AppCompatActivity() {
             discoveryManager.startDiscovery()
             serverRecyclerView.scheduleLayoutAnimation()
         }
-        
-
 
         lifecycleScope.launch {
-            combine(discoveryManager.servers, _audioCastServiceFlow, _refreshTrigger) { servers, service, _ ->
+            combine(discoveryManager.servers, _audioCastServiceFlow, _refreshTrigger) {
+                    servers,
+                    service,
+                    _
+                ->
                 Pair(servers, service)
             }.collectLatest { (servers, service) ->
                 serverListAdapter.submitList(servers)
 
+                val lastHost = sharedPreferences.getString(
+                    AudioCastService.KEY_LAST_SERVER_HOST,
+                    null
+                )
 
-                val lastHost = sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_HOST, null)
-                
                 if (isUserSelecting && selectedServer != null) {
                     val sel = selectedServer!!
                     val found = servers.find { it.host == sel.host && it.platform == sel.platform }
@@ -257,15 +283,22 @@ class MainActivity : AppCompatActivity() {
                         serverListAdapter.setSelectedItem(servers.indexOf(found))
                     }
                 } else if (lastHost != null && selectedServer == null) {
-                    val lastPlatform = sharedPreferences.getString(AudioCastService.KEY_LAST_SERVER_PLATFORM, null)
-                    val lastServer = servers.find { it.host == lastHost && (lastPlatform == null || it.platform == lastPlatform) }
-                        ?: servers.find { it.host == lastHost }
+                    val lastPlatform = sharedPreferences.getString(
+                        AudioCastService.KEY_LAST_SERVER_PLATFORM,
+                        null
+                    )
+                    val lastServer =
+                        servers.find {
+                            it.host == lastHost &&
+                                (lastPlatform == null || it.platform == lastPlatform)
+                        }
+                            ?: servers.find { it.host == lastHost }
                     if (lastServer != null) {
                         selectedServer = lastServer
                         serverListAdapter.setSelectedItem(servers.indexOf(lastServer))
                     }
                 }
-                
+
                 updateSyncUi()
             }
         }
@@ -278,7 +311,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        
+
         lifecycleScope.launch {
             audioCastServiceFlow.collectLatest { s ->
                 s?.pairingPinRequest?.collectLatest { host ->
@@ -288,10 +321,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        
-
     }
-
 
     private fun updateSyncUi() {
         val s = audioCastService
@@ -299,7 +329,7 @@ class MainActivity : AppCompatActivity() {
             val destinations = s.activeDestinations.value
             if (destinations.size > 1) {
                 syncSection.visibility = View.VISIBLE
-                
+
                 val currentHosts = destinations.map { it.host }
                 val existingSliders = mutableMapOf<String, View>()
                 for (i in 0 until syncSliderContainer.childCount) {
@@ -317,23 +347,28 @@ class MainActivity : AppCompatActivity() {
                 destinations.forEach { dest ->
                     var sliderItem = existingSliders[dest.host]
                     if (sliderItem == null) {
-                        sliderItem = layoutInflater.inflate(R.layout.item_sync_slider, syncSliderContainer, false)
+                        sliderItem =
+                            layoutInflater.inflate(
+                                R.layout.item_sync_slider,
+                                syncSliderContainer,
+                                false
+                            )
                         sliderItem.tag = dest.host
                         syncSliderContainer.addView(sliderItem)
                     }
 
                     val label = sliderItem.findViewById<TextView>(R.id.label)
                     val slider = sliderItem.findViewById<Slider>(R.id.slider)
-                    
+
                     label.text = "${dest.name} (${dest.delayMs}ms)"
-                    
+
                     if (!activeTouchHosts.contains(dest.host)) {
                         slider.apply {
                             valueFrom = 0f
                             valueTo = 2000f
                             stepSize = 20f
                             value = dest.delayMs.toFloat().coerceIn(0f, 2000f)
-                            
+
                             clearOnChangeListeners()
                             addOnChangeListener { _, value, fromUser ->
                                 if (fromUser) {
@@ -342,7 +377,7 @@ class MainActivity : AppCompatActivity() {
                                     performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                 }
                             }
-                            
+
                             addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
                                 override fun onStartTrackingTouch(slider: Slider) {
                                     activeTouchHosts.add(dest.host)
@@ -351,7 +386,9 @@ class MainActivity : AppCompatActivity() {
                                 override fun onStopTrackingTouch(slider: Slider) {
                                     activeTouchHosts.remove(dest.host)
                                     s.setDelay(dest.host, slider.value.toInt())
-                                    slider.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                    slider.performHapticFeedback(
+                                        HapticFeedbackConstants.VIRTUAL_KEY
+                                    )
                                 }
                             })
                         }
@@ -365,7 +402,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
@@ -378,6 +414,7 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this, SettingsActivity::class.java))
                 true
             }
+
             else -> super.onOptionsItemSelected(item)
         }
     }
@@ -405,12 +442,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        
 
         _refreshTrigger.value++
         updateSyncUi()
     }
-
 
     private fun showPairingPinDialog(host: String) {
         val input = EditText(this).apply {
@@ -418,7 +453,7 @@ class MainActivity : AppCompatActivity() {
             filters = arrayOf(android.text.InputFilter.LengthFilter(6))
             hint = "0000"
         }
-        
+
         val container = android.widget.FrameLayout(this).apply {
             val params = android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
@@ -454,9 +489,10 @@ class MainActivity : AppCompatActivity() {
                 stateTextView.animate().alpha(1f).setDuration(150).start()
             }.start()
         }
-        
-        castButton.isEnabled = (state == CastState.OFF && selectedServer != null) || state == CastState.CASTING
-        
+
+        castButton.isEnabled =
+            (state == CastState.OFF && selectedServer != null) || state == CastState.CASTING
+
         val activeColor = ContextCompat.getColor(this, R.color.accent_blue)
         val idleColor = ContextCompat.getColor(this, R.color.light_grey)
         val surfaceColor = ContextCompat.getColor(this, R.color.surface_card)
@@ -464,17 +500,27 @@ class MainActivity : AppCompatActivity() {
         if (state == CastState.CASTING) {
             castButton.text = getString(R.string.stop)
             castButton.setIconResource(android.R.drawable.ic_media_pause)
-            animateCardColors(idleColor, activeColor, surfaceColor, ColorUtils.setAlphaComponent(activeColor, 40))
+            animateCardColors(
+                idleColor,
+                activeColor,
+                surfaceColor,
+                ColorUtils.setAlphaComponent(activeColor, 40)
+            )
         } else {
             castButton.text = getString(R.string.start)
             castButton.setIconResource(android.R.drawable.ic_media_play)
-            animateCardColors(activeColor, idleColor, ColorUtils.setAlphaComponent(activeColor, 40), surfaceColor)
+            animateCardColors(
+                activeColor,
+                idleColor,
+                ColorUtils.setAlphaComponent(activeColor, 40),
+                surfaceColor
+            )
         }
     }
 
     private fun animateCardColors(fromStroke: Int, toStroke: Int, fromBg: Int, toBg: Int) {
         currentCardAnimator?.cancel()
-        
+
         currentCardAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 400
             val argbEvaluator = ArgbEvaluator()
@@ -482,7 +528,7 @@ class MainActivity : AppCompatActivity() {
                 val fraction = animator.animatedValue as Float
                 val strokeColor = argbEvaluator.evaluate(fraction, fromStroke, toStroke) as Int
                 val bgColor = argbEvaluator.evaluate(fraction, fromBg, toBg) as Int
-                
+
                 statusCard.setStrokeColor(ColorStateList.valueOf(strokeColor))
                 statusCard.setCardBackgroundColor(ColorStateList.valueOf(bgColor))
             }
@@ -490,7 +536,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
-
 
 class ServerAdapter(
     private val onServerClick: (Server) -> Unit,
@@ -508,8 +553,9 @@ class ServerAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val server = servers[position]
         holder.serverName.text = server.name
-        holder.serverHost.text = if (server.platform != null) "${server.host} • ${server.platform}" else server.host
-        
+        holder.serverHost.text =
+            if (server.platform != null) "${server.host} • ${server.platform}" else server.host
+
         val context = holder.itemView.context
         val colorRes = ContextCompat.getColor(context, R.color.accent_blue)
 
@@ -521,7 +567,8 @@ class ServerAdapter(
             holder.cardView.scaleY = 1.02f
         } else {
             holder.cardView.setStrokeWidth(0)
-            holder.icon.imageTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.light_grey))
+            holder.icon.imageTintList =
+                ColorStateList.valueOf(ContextCompat.getColor(context, R.color.light_grey))
             holder.cardView.scaleX = 1.0f
             holder.cardView.scaleY = 1.0f
         }
@@ -529,16 +576,16 @@ class ServerAdapter(
         if (server.platform == "Manual") {
             holder.moreButton.setImageResource(android.R.drawable.ic_menu_delete)
             holder.moreButton.visibility = View.VISIBLE
-            holder.moreButton.setOnClickListener { 
+            holder.moreButton.setOnClickListener {
                 it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                onDeleteClick(server) 
+                onDeleteClick(server)
             }
         } else {
             holder.moreButton.setImageResource(android.R.drawable.ic_menu_more)
             holder.moreButton.visibility = View.GONE
         }
 
-        holder.itemView.setOnClickListener { 
+        holder.itemView.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             onServerClick(server)
             setSelectedItem(position)
