@@ -43,7 +43,7 @@ object BinaryPlist {
         val trailer = ByteBuffer.allocate(32).order(ByteOrder.BIG_ENDIAN).apply {
             put(ByteArray(6))              // 6 unused bytes
             put(offsetSize.toByte())       // 1 byte: offset table entry size
-            put(1.toByte())               // 1 byte: object reference size
+            put(objectRefSize(numObjects).toByte()) // 1 byte: object reference size
             putLong(numObjects.toLong())   // 8 bytes: number of objects
             putLong(0L)                    // 8 bytes: root object index
             putLong(offsetTableStart.toLong()) // 8 bytes: offset table offset
@@ -111,12 +111,16 @@ object BinaryPlist {
                 obj.items.forEach { writeIntRef(findIndex(it, objects), objects.size, out) }
             }
             is PlistNode.PString -> {
-                val raw = obj.value.toByteArray(Charsets.UTF_8)
-                val len = raw.size
+                // ASCII strings use the 0x5 marker; anything else must be 0x6
+                // UTF-16BE, whose count is in 16-bit code units.
+                val ascii = obj.value.all { it.code < 0x80 }
+                val raw = obj.value.toByteArray(if (ascii) Charsets.US_ASCII else Charsets.UTF_16BE)
+                val marker = if (ascii) 0x50 else 0x60
+                val len = obj.value.length
                 if (len < 15) {
-                    out.write(0x50 or len)
+                    out.write(marker or len)
                 } else {
-                    out.write(0x50 or 0x0F)
+                    out.write(marker or 0x0F)
                     writeInt(len, out)
                 }
                 out.write(raw)
@@ -155,8 +159,10 @@ object BinaryPlist {
         }
     }
 
+    private fun objectRefSize(numObjects: Int): Int = if (numObjects <= 256) 1 else 2
+
     private fun writeIntRef(index: Int, numObjects: Int, out: ByteArrayOutputStream) {
-        if (numObjects <= 256) {
+        if (objectRefSize(numObjects) == 1) {
             out.write(index)
         } else {
             out.write(ByteBuffer.allocate(2).order(ByteOrder.BIG_ENDIAN).putShort(index.toShort()).array())
