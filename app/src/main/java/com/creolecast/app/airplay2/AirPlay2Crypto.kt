@@ -12,10 +12,10 @@ import org.bouncycastle.crypto.params.X25519KeyGenerationParameters
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
+import org.bouncycastle.crypto.modes.ChaCha20Poly1305
+import org.bouncycastle.crypto.params.AEADParameters
+import org.bouncycastle.crypto.params.KeyParameter
 import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 class AirPlay2Crypto {
 
@@ -48,29 +48,34 @@ class AirPlay2Crypto {
             plaintext: ByteArray,
             aad: ByteArray
         ): Pair<ByteArray, ByteArray> {
-            val cipher = Cipher.getInstance("ChaCha20-Poly1305/None/NoPadding")
-            val spec = SecretKeySpec(key, "ChaCha20")
-            val iv = IvParameterSpec(nonce)
-            cipher.init(Cipher.ENCRYPT_MODE, spec, iv)
-            cipher.updateAAD(aad)
-            val ciphertext = cipher.doFinal(plaintext)
-            val tagStart = ciphertext.size - 16
-            return Pair(ciphertext.copyOfRange(0, tagStart), ciphertext.copyOfRange(tagStart, ciphertext.size))
+            val sealed = chacha20Poly1305(true, key, nonce, plaintext, aad)
+            val tagStart = sealed.size - 16
+            return Pair(sealed.copyOfRange(0, tagStart), sealed.copyOfRange(tagStart, sealed.size))
         }
 
+        /** Throws [org.bouncycastle.crypto.InvalidCipherTextException] on a tag mismatch. */
         fun chacha20Poly1305Decrypt(
             key: ByteArray,
             nonce: ByteArray,
             ciphertext: ByteArray,
             aad: ByteArray,
             tag: ByteArray
+        ): ByteArray = chacha20Poly1305(false, key, nonce, ciphertext + tag, aad)
+
+        /**
+         * RFC 8439 AEAD via BouncyCastle's lightweight engine. The JCE name
+         * "ChaCha20-Poly1305" exists on desktop JDKs but not in Android's
+         * Conscrypt, so going through [javax.crypto.Cipher] failed on devices.
+         */
+        private fun chacha20Poly1305(
+            encrypt: Boolean, key: ByteArray, nonce: ByteArray, input: ByteArray, aad: ByteArray
         ): ByteArray {
-            val cipher = Cipher.getInstance("ChaCha20-Poly1305/None/NoPadding")
-            val spec = SecretKeySpec(key, "ChaCha20")
-            val iv = IvParameterSpec(nonce)
-            cipher.init(Cipher.DECRYPT_MODE, spec, iv)
-            cipher.updateAAD(aad)
-            return cipher.doFinal(ciphertext + tag)
+            val aead = ChaCha20Poly1305()
+            aead.init(encrypt, AEADParameters(KeyParameter(key), 128, nonce, aad))
+            val out = ByteArray(aead.getOutputSize(input.size))
+            val n = aead.processBytes(input, 0, input.size, out, 0)
+            aead.doFinal(out, n)
+            return out
         }
 
         fun ed25519Verify(publicKey: ByteArray, message: ByteArray, signature: ByteArray): Boolean {
