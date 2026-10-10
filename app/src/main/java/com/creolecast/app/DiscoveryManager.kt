@@ -6,7 +6,6 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
 import android.util.Patterns
-import com.creolecast.app.raop.RaopDevice
 import com.creolecast.app.raop.RaopDiscovery
 import java.net.DatagramPacket
 import java.net.DatagramSocket

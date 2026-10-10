@@ -3,7 +3,6 @@ package com.creolecast.app.raop
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
-import java.net.InetAddress
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
