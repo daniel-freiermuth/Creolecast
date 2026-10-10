@@ -94,12 +94,12 @@ kotlin {
     }
 }
 
-// Static analysis: every detekt rule (allRules), with type resolution via detektMain /
-// detektTest. Deviations live in config/detekt/detekt.yml; pre-existing findings are
-// grandfathered in the baseline files, so only new code has to be clean.
+// Static analysis: detekt's default rules plus the bug-catching opt-ins enabled in
+// config/detekt/detekt.yml (which also lists every deviation), with type resolution via
+// detektMain / detektTest. Pre-existing findings are grandfathered in the baseline files,
+// so only new code has to be clean.
 detekt {
     buildUponDefaultConfig = true
-    allRules = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
     baseline = file("detekt-baseline.xml")
     // Parallel analysis crashes 2.0.0-alpha.6 intermittently (ArrayIndexOutOfBounds in

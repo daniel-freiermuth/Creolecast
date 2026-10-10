@@ -5,49 +5,6 @@
     <ID>CastNullableToNonNullableType:AirPlay2CaptureRateTest.kt:AirPlay2CaptureRateTest$as</ID>
     <ID>CastNullableToNonNullableType:BinaryPlistTest.kt:BinaryPlistTest$as</ID>
     <ID>LongParameterList:ServerIdentityTest.kt:ServerIdentityTest$private fun server</ID>
-    <ID>MultilineLambdaItParameter:SRP6aClientTest.kt:SRP6aClientTest${ if (it[0] == 0.toByte() ) { it.copyOfRange(1, it.size) } else { it } }</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Decrypt( ByteArray(32) { 0xFF.toByte() }, nonce, ct, ByteArray(0), tag )</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Decrypt(key, nonce, ct, ByteArray(0), tag)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Decrypt(key, nonce, ct, aad, tag)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Encrypt( ByteArray(32), ByteArray(12), ByteArray(32), ByteArray(0) )</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Encrypt( key, nonce, ByteArray(0), ByteArray(0) )</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Encrypt(key, nonce, plaintext, ByteArray(0))</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Encrypt(key, nonce, plaintext, aad)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$hkdfSha512("Pair-Setup-AES-Key".toByteArray(), ikm, info, 32)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$hkdfSha512("Pair-Verify-AES-Key".toByteArray(), ikm, info, 32)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$hkdfSha512(salt, ikm, info, 32)</ID>
-    <ID>NamedArguments:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$hkdfSha512(salt, ikm, info, 64)</ID>
-    <ID>NamedArguments:ServerIdentityTest.kt:ServerIdentityTest$server("Box", "192.168.188.9", 7000, "unknown")</ID>
-    <ID>NamedArguments:ServerIdentityTest.kt:ServerIdentityTest$server("Box", "192.168.188.9", 7000, null)</ID>
-    <ID>NamedArguments:ServerIdentityTest.kt:ServerIdentityTest$server("Zynthian", "192.168.188.25", 5000, "AirPlay")</ID>
-    <ID>NamedArguments:ServerIdentityTest.kt:ServerIdentityTest$server("Zynthian", "192.168.188.25", 5000, "AirPlay2")</ID>
-    <ID>NamedArguments:ServerIdentityTest.kt:ServerIdentityTest$server("Zynthian", "192.168.188.26", 5000, "AirPlay")</ID>
-    <ID>StringShouldBeRawString:PacketLoggerTest.kt:PacketLoggerTest$"^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}$"</ID>
     <ID>SwallowedException:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$e: Exception</ID>
-    <ID>UnderscoresInNumericLiterals:AirPlay2CaptureRateTest.kt:AirPlay2CaptureRateTest$44100L</ID>
-    <ID>UnderscoresInNumericLiterals:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$65535</ID>
-    <ID>UnderscoresInNumericLiterals:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$65536</ID>
-    <ID>UnderscoresInNumericLiterals:BinaryPlistTest.kt:BinaryPlistTest$12345</ID>
-    <ID>UnderscoresInNumericLiterals:BinaryPlistTest.kt:BinaryPlistTest$12345L</ID>
-    <ID>UnderscoresInNumericLiterals:BinaryPlistTest.kt:BinaryPlistTest$50123L</ID>
-    <ID>UnderscoresInNumericLiterals:BinaryPlistTest.kt:BinaryPlistTest$70000L</ID>
-    <ID>UnderscoresInNumericLiterals:MediaClockTest.kt:MediaClockTest$4294967296.0</ID>
-    <ID>UnderscoresInNumericLiterals:ServerIdentityTest.kt:ServerIdentityTest$48000</ID>
-    <ID>UnnamedParameterUse:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Decrypt</ID>
-    <ID>UnnamedParameterUse:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$chacha20Poly1305Encrypt</ID>
-    <ID>UnnamedParameterUse:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$ed25519SignWithSeed</ID>
-    <ID>UnnamedParameterUse:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$ed25519Verify</ID>
-    <ID>UnnamedParameterUse:MediaClockTest.kt:MediaClockTest$headers</ID>
-    <ID>UnnamedParameterUse:SRP6aClientTest.kt:SRP6aClientTest$copyOfRange</ID>
-    <ID>UnnamedParameterUse:ServerIdentityTest.kt:ServerIdentityTest$server</ID>
-    <ID>UnnecessaryFullyQualifiedName:BinaryPlistTest.kt:BinaryPlistTest$java.util.UUID</ID>
-    <ID>UnnecessaryFullyQualifiedName:ResolveTrustedControlUrlTest.kt:ResolveTrustedControlUrlTest$java.net.URI("http://192.168.1.50/description.xml")</ID>
-    <ID>UnnecessaryFullyQualifiedName:ResolveTrustedControlUrlTest.kt:ResolveTrustedControlUrlTest$java.net.URI("http://192.168.1.50:49152/description.xml")</ID>
-    <ID>UnnecessaryFullyQualifiedName:ResolveTrustedControlUrlTest.kt:ResolveTrustedControlUrlTest$java.net.URI("http://192.168.1.50:8080/description.xml")</ID>
-    <ID>UnnecessaryFullyQualifiedName:ResolveTrustedControlUrlTest.kt:ResolveTrustedControlUrlTest$java.net.URI("https://192.168.1.50/description.xml")</ID>
-    <ID>UnnecessaryParentheses:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$(counter shr (i * 8))</ID>
-    <ID>UnnecessaryParentheses:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$(i * 8)</ID>
-    <ID>UnnecessaryParentheses:AirPlay2CryptoTest.kt:AirPlay2CryptoTest$(seq shr 8)</ID>
-    <ID>UnnecessaryParentheses:MediaClockTest.kt:MediaClockTest$(3L shl 32)</ID>
   </CurrentIssues>
 </SmellBaseline>

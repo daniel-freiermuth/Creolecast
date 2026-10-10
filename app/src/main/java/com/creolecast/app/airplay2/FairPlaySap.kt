@@ -1,6 +1,7 @@
-// Constant tables below are transcribed verbatim as hex strings from the reference
-// implementation so they can be compared against it; wrapping them would not help.
-@file:Suppress("ktlint:standard:max-line-length")
+// This file transcribes the reference implementation verbatim: hex constant tables and
+// the obfuscated transform with its literal indices and rotations. Wrapping the tables or
+// naming every literal would only make it harder to compare against the reference.
+@file:Suppress("ktlint:standard:max-line-length", "MagicNumber")
 
 package com.creolecast.app.airplay2
 
