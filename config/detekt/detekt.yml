@@ -1,19 +1,69 @@
-# detekt runs with buildUponDefaultConfig + allRules (see app/build.gradle.kts):
-# every rule, including opt-in ones, is active. This file lists only deliberate
-# deviations from that, each with its reason.
-
-comments:
-  # Requires a per-file license header template; the project is licensed via
-  # LICENSE.md instead.
-  AbsentOrWrongFileLicense:
-    active: false
+# detekt runs with its default rule set (buildUponDefaultConfig) plus the opt-in
+# rules below that catch real bugs. This file lists only deliberate deviations
+# from detekt's defaults, each with its reason.
 
 naming:
   # Tests use descriptive backticked names (`fun \`does X when Y\`()`).
   FunctionNameMaxLength:
     excludes: ['**/test/**', '**/androidTest/**']
 
+potential-bugs:
+  CastNullableToNonNullableType:
+    active: true
+  CastToNullableType:
+    active: true
+  CharArrayToStringCall:
+    active: true
+  DontDowncastCollectionTypes:
+    active: true
+  ElseCaseInsteadOfExhaustiveWhen:
+    active: true
+  ExitOutsideMain:
+    active: true
+  MissingPackageDeclaration:
+    active: true
+  MissingSuperCall:
+    active: true
+  MissingUseCall:
+    active: true
+  NullCheckOnMutableProperty:
+    active: true
+  NullableToStringCall:
+    active: true
+  PropertyUsedBeforeDeclaration:
+    active: true
+  UnconditionalJumpStatementInLoop:
+    active: true
+  UnnecessaryNotNullCheck:
+    active: true
+
+coroutines:
+  CoroutineLaunchedInTestWithoutRunTest:
+    active: true
+  GlobalCoroutineUsage:
+    active: true
+  SuspendFunInFinallySection:
+    active: true
+  SuspendFunSwallowedCancellation:
+    active: true
+  SuspendFunWithCoroutineScopeReceiver:
+    active: true
+
+exceptions:
+  ErrorUsageWithThrowable:
+    active: true
+  NotImplementedDeclaration:
+    active: true
+  ObjectExtendsThrowable:
+    active: true
+  ThrowingExceptionInMain:
+    active: true
+
 style:
+  # Byte and bit-width arithmetic (masks, shifts) is idiomatic in the protocol
+  # code; naming every 0xFF or 8 would not help. Other literals need a name.
+  MagicNumber:
+    ignoreNumbers: ['-1', '0', '1', '2', '8', '16', '24', '32', '64', '255', '65535']
   # Formatting is ktlint's job (Spotless, .editorconfig); these would report the
   # same issues twice.
   MaxLineLength:
