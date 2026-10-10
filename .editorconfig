@@ -1,0 +1,18 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{kt,kts}]
+# Matches Android Studio's formatter for kotlin.code.style=official, so IDE
+# reformatting and the ktlint check (via Spotless) agree.
+ktlint_code_style = android_studio
+max_line_length = 100
+
+[*.{yml,yaml,json,toml}]
+indent_size = 2
