@@ -48,7 +48,8 @@ class VisualizerView @JvmOverloads constructor(
                 if (idx + 1 >= data.size) break
 
                 // PCM 16-bit LE
-                val sample = ((data[idx + 1].toInt() shl 8) or (data[idx].toInt() and 0xFF)).toShort()
+                val sample =
+                    ((data[idx + 1].toInt() shl 8) or (data[idx].toInt() and 0xFF)).toShort()
                 sum += Math.abs(sample.toFloat())
             }
             // Normalize and apply a simple logarithmic scale for better visualization

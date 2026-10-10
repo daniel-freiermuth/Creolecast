@@ -36,17 +36,33 @@ import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
 import com.creolecast.app.raop.AudioResampler
 import com.creolecast.app.raop.RaopCrypto
-import io.ktor.client.*
-import io.ktor.client.engine.okhttp.*
-import io.ktor.client.plugins.*
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.client.plugins.logging.*
-import io.ktor.client.plugins.websocket.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.websocket.*
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.logging.LogLevel
+import io.ktor.client.plugins.logging.Logger
+import io.ktor.client.plugins.logging.Logging
+import io.ktor.client.plugins.timeout
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
+import io.ktor.client.request.url
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.URLProtocol
+import io.ktor.http.contentType
+import io.ktor.http.path
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import io.ktor.websocket.send
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -66,16 +82,31 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.pow
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import org.json.JSONObject
@@ -746,11 +777,7 @@ class AudioCastService : Service() {
 
             val metadataXml = createDidlMetadata(streamUrl, _metadata.value)
 
-            val setUriBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(
-                streamUrl
-            )}</CurrentURI><CurrentURIMetaData>${escapeXml(
-                metadataXml
-            )}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
+            val setUriBody = setAvTransportUriBody(streamUrl, metadataXml)
 
             client.post(controlUrl) {
                 header(
@@ -761,7 +788,8 @@ class AudioCastService : Service() {
                 setBody(setUriBody)
             }
 
-            val playBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><Speed>1</Speed></u:Play></s:Body></s:Envelope>"""
+            val playBody =
+                soapAction(AV_TRANSPORT, "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>")
 
             client.post(controlUrl) {
                 header("SoapAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"")
@@ -897,7 +925,8 @@ class AudioCastService : Service() {
 
             // Load any PIN previously saved for this device
             var pin: String? = securePreferences.getString("airplay2_pin_${dest.host}", null)
-            var clearPinOnFailure = pin != null // stale saved pin should be wiped if connect() fails
+            // A stale saved PIN should be wiped if connect() fails.
+            var clearPinOnFailure = pin != null
 
             while (true) {
                 val ap2Client = AirPlay2Client(
@@ -1427,12 +1456,11 @@ class AudioCastService : Service() {
                                 val pkt = DatagramPacket(buf, buf.size)
                                 timingUdp.receive(pkt)
                                 val data = pkt.data
+                                val type = String.format("%02X", data[1])
                                 Log.d(
                                     TAG,
-                                    "RAOP timing: received ${pkt.length} bytes from ${pkt.address}:${pkt.port}, type=0x${String.format(
-                                        "%02X",
-                                        data[1]
-                                    )}"
+                                    "RAOP timing: received ${pkt.length} bytes from " +
+                                        "${pkt.address}:${pkt.port}, type=0x$type"
                                 )
 
                                 if (pkt.length >= 32) {
@@ -1525,11 +1553,11 @@ class AudioCastService : Service() {
 
                 // Audio send loop — send RTP packets over UDP with ALAC uncompressed framing
                 // Accumulate exactly 1408 bytes (352 stereo samples) per ALAC frame
-                val FRAME_BYTES = 1408 // 352 samples × 2 channels × 2 bytes
+                val frameBytes = 1408 // 352 samples × 2 channels × 2 bytes
                 try {
                     var isFirstPacket = true
                     val resampler = AudioResampler(channels = 2)
-                    val accumulator = ByteArrayOutputStream(FRAME_BYTES * 2)
+                    val accumulator = ByteArrayOutputStream(frameBytes * 2)
 
                     audioBufferFlow.collect { rawBuffer ->
                         val buffer = rawBuffer // captured at 44100 Hz natively, no resampling
@@ -1537,9 +1565,9 @@ class AudioCastService : Service() {
 
                         val accBytes = accumulator.toByteArray()
                         var consumed = 0
-                        while (consumed + FRAME_BYTES <= accBytes.size) {
-                            val chunk = accBytes.copyOfRange(consumed, consumed + FRAME_BYTES)
-                            consumed += FRAME_BYTES
+                        while (consumed + frameBytes <= accBytes.size) {
+                            val chunk = accBytes.copyOfRange(consumed, consumed + frameBytes)
+                            consumed += frameBytes
 
                             var alacFrame = alacEncodeUncompressedRaop(chunk)
                             raopCrypto?.let { alacFrame = it.encryptAudio(alacFrame) }
@@ -1551,7 +1579,7 @@ class AudioCastService : Service() {
                                 putInt(timestamp)
                                 putInt(rtpSessionId)
                             }
-                            timestamp += FRAME_BYTES / 4 // 352 samples
+                            timestamp += frameBytes / 4 // 352 samples
                             isFirstPacket = false
 
                             val payload = rtpHeader.array() + alacFrame
@@ -1903,7 +1931,11 @@ class AudioCastService : Service() {
 
     private suspend fun adjustDlnaVolume(rcUrl: String, direction: String) {
         try {
-            val getVolBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel></u:GetVolume></s:Body></s:Envelope>"""
+            val getVolBody = soapAction(
+                RENDERING_CONTROL,
+                "GetVolume",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel>"
+            )
             val resp = client.post(rcUrl) {
                 header(
                     "SoapAction",
@@ -1927,7 +1959,12 @@ class AudioCastService : Service() {
                 (currentVol - 5).coerceAtLeast(0)
             }
 
-            val setVolBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>$newVol</DesiredVolume></u:SetVolume></s:Body></s:Envelope>"""
+            val setVolBody = soapAction(
+                RENDERING_CONTROL,
+                "SetVolume",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel>" +
+                    "<DesiredVolume>$newVol</DesiredVolume>"
+            )
             client.post(rcUrl) {
                 header(
                     "SoapAction",
@@ -2059,11 +2096,7 @@ class AudioCastService : Service() {
         val metadataXml = createDidlMetadata(streamUrl, metadata)
 
         try {
-            val body = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID><CurrentURI>${escapeXml(
-                streamUrl
-            )}</CurrentURI><CurrentURIMetaData>${escapeXml(
-                metadataXml
-            )}</CurrentURIMetaData></u:SetAVTransportURI></s:Body></s:Envelope>"""
+            val body = setAvTransportUriBody(streamUrl, metadataXml)
             client.post(avUrl) {
                 header(
                     "SoapAction",
@@ -2212,6 +2245,21 @@ class AudioCastService : Service() {
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
         .replace("'", "&apos;")
+
+    /** A UPnP [action] on [service], wrapped in the SOAP envelope sent to DLNA renderers. */
+    private fun soapAction(service: String, action: String, arguments: String): String =
+        """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" """ +
+            """s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>""" +
+            """<u:$action xmlns:u="$service">$arguments</u:$action>""" +
+            "</s:Body></s:Envelope>"
+
+    private fun setAvTransportUriBody(streamUrl: String, metadataXml: String): String = soapAction(
+        AV_TRANSPORT,
+        "SetAVTransportURI",
+        "<InstanceID>0</InstanceID>" +
+            "<CurrentURI>${escapeXml(streamUrl)}</CurrentURI>" +
+            "<CurrentURIMetaData>${escapeXml(metadataXml)}</CurrentURIMetaData>"
+    )
 
     private fun getLocalIpAddress(): String? {
         try {
@@ -2512,7 +2560,8 @@ class AudioCastService : Service() {
                         "DLNA" -> {
                             val (controlUrl, _) = getDlnaControlUrls(dest.extra)
                             if (controlUrl == null) return@launch
-                            val stopBody = """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:Stop xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:Stop></s:Body></s:Envelope>"""
+                            val stopBody =
+                                soapAction(AV_TRANSPORT, "Stop", "<InstanceID>0</InstanceID>")
                             client.post(controlUrl) {
                                 header(
                                     "SoapAction",
@@ -2675,6 +2724,8 @@ class AudioCastService : Service() {
 
     companion object {
         private const val TAG = "AudioCastService"
+        private const val AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+        private const val RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "AudioCastChannel"
         const val ACTION_START = "com.creolecast.app.ACTION_START"

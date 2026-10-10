@@ -23,7 +23,7 @@ class PacketLoggerTest {
     }
 
     @Test
-    fun `log() survives concurrent calls from many threads without throwing or corrupting timestamps`() {
+    fun `log() survives concurrent threads without throwing or corrupting timestamps`() {
         val threadCount = 16
         val logsPerThread = 500
         val timestampPattern = Regex("^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}$")
@@ -72,7 +72,7 @@ class PacketLoggerTest {
     }
 
     @Test
-    fun `log() coalesces identical consecutive entries into a single entry with an incrementing count`() {
+    fun `log() coalesces identical consecutive entries into one with a count`() {
         repeat(5) {
             PacketLogger.log(PacketDirection.OUT, PacketType.AUDIO, "Audio frame sent")
         }

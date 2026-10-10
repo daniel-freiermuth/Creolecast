@@ -13,9 +13,12 @@ data class RaopDevice(
     val host: String,
     val port: Int,
     val model: String? = null,
-    val encryptionType: Int = 0, // et
-    val sampleRate: Int = 44100, // sr
-    val codec: Int = 0 // cn (0=PCM, 1=ALAC)
+    // TXT "et"
+    val encryptionType: Int = 0,
+    // TXT "sr"
+    val sampleRate: Int = 44100,
+    // TXT "cn" (0=PCM, 1=ALAC)
+    val codec: Int = 0
 ) {
     fun supportsRsa(): Boolean = (encryptionType and 1) != 0
 }

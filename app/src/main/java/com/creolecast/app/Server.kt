@@ -9,7 +9,8 @@ data class Server(
     val sampleRate: Int,
     val channels: Int,
     val platform: String? = null,
-    val extra: String? = null // For DLNA control URL or other data
+    // For DLNA control URL or other data
+    val extra: String? = null
 )
 
 /**

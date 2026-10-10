@@ -15,7 +15,9 @@ class RaopCrypto {
             Security.addProvider(BouncyCastleProvider())
         }
 
-        // Apple AirPlay RSA Public Key Modulus (2048-bit) as used in airplay2-rs
+        // Apple AirPlay RSA Public Key Modulus (2048-bit) as used in airplay2-rs.
+        // Kept as the reference's 15-bytes-per-row table so it can be diffed against it.
+        @Suppress("ktlint:standard:max-line-length")
         private val APPLE_RSA_MODULUS = byteArrayOf(
             0x59.toByte(), 0xdc.toByte(), 0xd5.toByte(), 0x24.toByte(), 0x49.toByte(), 0xba.toByte(), 0x62.toByte(), 0x13.toByte(), 0x2a.toByte(), 0x45.toByte(), 0x67.toByte(), 0x68.toByte(), 0x22.toByte(), 0x5b.toByte(), 0x16.toByte(),
             0x78.toByte(), 0x1a.toByte(), 0xfb.toByte(), 0xce.toByte(), 0xb1.toByte(), 0x20.toByte(), 0x64.toByte(), 0x12.toByte(), 0xd8.toByte(), 0xf5.toByte(), 0x36.toByte(), 0x6a.toByte(), 0x58.toByte(), 0x91.toByte(), 0x6c.toByte(),

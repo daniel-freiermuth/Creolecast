@@ -676,12 +676,8 @@ class AirPlay2Client(
     ): Boolean {
         if (clockId != 0L) {
             if (!mediaClock.configureFromSetup(clockId, headers, receivedAt)) {
-                Log.d(
-                    TAG,
-                    "SETUP lacks receiver clock headers; local clock on timeline 0x${clockId.toULong().toString(
-                        16
-                    )}"
-                )
+                val timeline = clockId.toULong().toString(16)
+                Log.d(TAG, "SETUP lacks receiver clock headers; local clock on 0x$timeline")
                 mediaClock.configureFromLocalClock(clockId)
             }
             return true

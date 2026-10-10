@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity() {
     private val _audioCastServiceFlow = MutableStateFlow<AudioCastService?>(null)
     val audioCastServiceFlow = _audioCastServiceFlow.asStateFlow()
 
-    private val _refreshTrigger = MutableStateFlow(0)
+    private val refreshTrigger = MutableStateFlow(0)
 
     private val activeTouchHosts = mutableSetOf<String>()
 
@@ -260,7 +260,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            combine(discoveryManager.servers, _audioCastServiceFlow, _refreshTrigger) {
+            combine(discoveryManager.servers, _audioCastServiceFlow, refreshTrigger) {
                     servers,
                     service,
                     _
@@ -443,7 +443,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
 
-        _refreshTrigger.value++
+        refreshTrigger.value++
         updateSyncUi()
     }
 

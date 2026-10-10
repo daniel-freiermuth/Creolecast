@@ -45,7 +45,6 @@ class DiscoveryManager(private val context: Context) {
     private val discoveredServers = mutableMapOf<String, Server>()
     private val resolveQueue = ConcurrentLinkedQueue<NsdServiceInfo>()
     private var activeResolves = 0
-    private val MAX_CONCURRENT_RESOLVES = 3
     private var discoveryJob: Job? = null
     private val activeListeners = mutableListOf<NsdManager.DiscoveryListener>()
     private var raopDiscovery: RaopDiscovery? = null
@@ -437,7 +436,11 @@ class DiscoveryManager(private val context: Context) {
         while (isActive) {
             searchTargets.forEach { st ->
                 try {
-                    val query = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: $st\r\n\r\n"
+                    val query = "M-SEARCH * HTTP/1.1\r\n" +
+                        "HOST: 239.255.255.250:1900\r\n" +
+                        "MAN: \"ssdp:discover\"\r\n" +
+                        "MX: 3\r\n" +
+                        "ST: $st\r\n\r\n"
                     DatagramSocket().use { socket ->
                         socket.soTimeout = 4000
                         val packet =
@@ -628,6 +631,7 @@ class DiscoveryManager(private val context: Context) {
     companion object {
         private const val TAG = "DiscoveryManager"
         private const val MAX_DEVICE_DESCRIPTION_BYTES = 262_144
+        private const val MAX_CONCURRENT_RESOLVES = 3
 
         /**
          * Resolves a UPnP <controlURL> value against the (already host-validated) device

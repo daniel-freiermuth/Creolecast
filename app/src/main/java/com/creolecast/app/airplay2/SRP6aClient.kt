@@ -10,7 +10,10 @@ import org.bouncycastle.crypto.digests.SHA512Digest
  * `/pair-setup`. Transcribed from the Go reference implementation used by the
  * F-Droid app "Mirror": doubletake `internal/airplay/pairing.go`, functions
  * `pairSetupTransient` (M1) and `completeSRPExchange` (M3..M6).
+ * Variable names (`A`, `B`, `K`, `M1`, `N`, ...) follow RFC 5054 notation so the
+ * code can be checked against the spec, hence the naming suppression.
  */
+@Suppress("ktlint:standard:property-naming")
 class SRP6aClient(
     private val pin: String,
     private val username: String = "Pair-Setup",
