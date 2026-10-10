@@ -100,6 +100,7 @@ class AudioCastService : Service() {
     private var audioRecord: AudioRecord? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var mediaSession: MediaSession? = null
+    private var volumeProvider: VolumeProvider? = null
     private var receiverVolumeSteps: Int = MAX_VOLUME_STEPS
     
     private lateinit var sharedPreferences: SharedPreferences
@@ -2047,7 +2048,7 @@ class AudioCastService : Service() {
 
         session.setCallback(object : MediaSession.Callback() {})
 
-        session.setPlaybackToRemote(object : VolumeProvider(
+        val provider = object : VolumeProvider(
             VOLUME_CONTROL_ABSOLUTE, MAX_VOLUME_STEPS, receiverVolumeSteps
         ) {
             override fun onSetVolumeTo(volume: Int) {
@@ -2064,16 +2065,19 @@ class AudioCastService : Service() {
                 sendVolumeDb((newVol - MAX_VOLUME_STEPS).toDouble())
                 updateNotification()
             }
-        })
+        }
+        session.setPlaybackToRemote(provider)
 
         session.isActive = true
         mediaSession = session
+        volumeProvider = provider
     }
 
     private fun stopVolumeSession() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        volumeProvider = null
     }
     private fun stopRemoteSessions(destinations: List<CastDestination>): List<Job> {
         return destinations.map { dest ->
@@ -2179,6 +2183,7 @@ class AudioCastService : Service() {
     private fun adjustNotificationVolume(direction: Int) {
         val newVol = (receiverVolumeSteps + direction).coerceIn(0, MAX_VOLUME_STEPS)
         receiverVolumeSteps = newVol
+        volumeProvider?.setCurrentVolume(newVol)
         val dB = (newVol - MAX_VOLUME_STEPS).toDouble()
         sendVolumeDb(dB)
         updateNotification()
