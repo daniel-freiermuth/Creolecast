@@ -8,7 +8,6 @@ import javax.crypto.Cipher
 import org.bouncycastle.asn1.pkcs.RSAPrivateKey
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class RaopCryptoTest {
@@ -26,20 +25,31 @@ class RaopCryptoTest {
     }
 
     @Test
-    fun testEncryptAudio() {
-        val aesKey = ByteArray(16) { 0x01.toByte() }
-        val iv = ByteArray(16) { 0x02.toByte() }
+    fun `audio is AES-128-CBC restarted from the session IV on every packet`() {
+        // NIST SP 800-38A, F.2.1 CBC-AES128.Encrypt
         val crypto = RaopCrypto()
-        crypto.initAes(aesKey, iv)
+        crypto.initAes(
+            hex("2b7e151628aed2a6abf7158809cf4f3c"),
+            hex("000102030405060708090a0b0c0d0e0f")
+        )
+        val plaintext = hex(
+            "6bc1bee22e409f96e93d7e117393172a" + "ae2d8a571e03ac9c9eb76fac45af8e51" +
+                "30c81c46a35ce411e5fbc1191a0a52ef" + "f69f2445df4f9b17ad2b417be66c3710"
+        )
+        val expected = hex(
+            "7649abac8119b246cee98e9b12e9197d" + "5086cb9b507219ee95db113a917678b2" +
+                "73bed6b8e3c1743b7116e69e22229516" + "3ff1caa1681fac09120eca307586e1a7"
+        )
 
-        val data = ByteArray(16)
-        val encrypted1 = crypto.encryptAudio(data)
-        val encrypted2 = crypto.encryptAudio(data)
-
-        // In RAOP, IV is reset for every packet, so same data should give same ciphertext
-        assertArrayEquals(encrypted1, encrypted2)
-        assertNotEquals(data[0], encrypted1[0])
+        assertArrayEquals(expected, crypto.encryptAudio(plaintext))
+        assertArrayEquals(
+            "second packet must not chain from the first",
+            expected,
+            crypto.encryptAudio(plaintext)
+        )
     }
+
+    private fun hex(s: String): ByteArray = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
     private fun airportExpressPrivateKey(): PrivateKey {
         val pkcs1 = RSAPrivateKey.getInstance(

@@ -2,17 +2,30 @@ package com.creolecast.app.raop
 
 import java.math.BigInteger
 import java.security.KeyFactory
+import java.security.spec.MGF1ParameterSpec
 import java.security.spec.RSAPublicKeySpec
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.OAEPParameterSpec
+import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 
+/**
+ * AirPlay 1 (RAOP) session crypto, served by the platform's default JCA providers (Conscrypt
+ * on Android). Never request the "BC" provider by name: on Android it resolves to the
+ * platform's internal, trimmed Bouncy Castle (the bundled bcprov cannot register under that
+ * name), and Android deprecates explicit-provider lookups outside the Keystore. Passing a
+ * bundled `BouncyCastleProvider()` instance instead avoids that, but constructing it costs
+ * ~0.6 s on a cold Android process; Conscrypt already serves both ciphers.
+ *
+ * Not thread-safe: one instance per RAOP session, driven by its single audio send loop.
+ */
 class RaopCrypto {
     companion object {
-        // The bundled (full) Bouncy Castle provider, passed by instance: looking "BC" up
-        // by name would return Android's stripped platform provider instead.
-        private val BOUNCY_CASTLE = BouncyCastleProvider()
+        // RAOP wraps the session AES key with RSA-OAEP using SHA-1 for both the OAEP and the
+        // MGF1 digest. Spelled out because transformation names leave MGF1 provider-defined.
+        private val OAEP_SHA1 =
+            OAEPParameterSpec("SHA-1", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT)
 
         // AirPort Express RSA public key modulus (2048-bit, e = 65537). Receivers decrypt
         // a=rsaaeskey with the matching private key: shairplay's airport.key,
@@ -31,16 +44,14 @@ class RaopCrypto {
 
         fun encryptAesKey(aesKey: ByteArray): ByteArray {
             val spec = RSAPublicKeySpec(AIRPORT_RSA_MODULUS, BigInteger.valueOf(65537))
-            val factory = KeyFactory.getInstance("RSA")
-            val publicKey = factory.generatePublic(spec)
-
-            // RAOP uses RSA-OAEP with SHA-1
-            val cipher = Cipher.getInstance("RSA/None/OAEPWithSHA1AndMGF1Padding", BOUNCY_CASTLE)
-            cipher.init(Cipher.ENCRYPT_MODE, publicKey)
+            val publicKey = KeyFactory.getInstance("RSA").generatePublic(spec)
+            val cipher = Cipher.getInstance("RSA/ECB/OAEPPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, publicKey, OAEP_SHA1)
             return cipher.doFinal(aesKey)
         }
     }
 
+    private val aesCipher: Cipher = Cipher.getInstance("AES/CBC/NoPadding")
     private lateinit var secretKeySpec: SecretKeySpec
     private lateinit var ivSpec: IvParameterSpec
 
@@ -54,16 +65,16 @@ class RaopCrypto {
      * In RAOP, the IV is reset for every packet.
      */
     fun encryptAudio(data: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/CBC/NoPadding", BOUNCY_CASTLE)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
+        // Re-init restarts CBC from the session IV: RAOP does not chain across packets.
+        aesCipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
 
         return if (data.size % 16 == 0) {
-            cipher.doFinal(data)
+            aesCipher.doFinal(data)
         } else {
             val paddedSize = ((data.size + 15) / 16) * 16
             val paddedData = ByteArray(paddedSize)
             System.arraycopy(data, 0, paddedData, 0, data.size)
-            cipher.doFinal(paddedData)
+            aesCipher.doFinal(paddedData)
         }
     }
 }
