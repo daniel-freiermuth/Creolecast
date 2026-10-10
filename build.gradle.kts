@@ -6,7 +6,8 @@ plugins {
 }
 
 // Formatting: ktlint via Spotless (the dedicated ktlint plugins don't support AGP 9's
-// built-in Kotlin). Style comes from .editorconfig. `spotlessApply` fixes, `spotlessCheck` verifies.
+// built-in Kotlin). Style comes from .editorconfig.
+// `spotlessApply` fixes, `spotlessCheck` verifies.
 spotless {
     kotlin {
         target("app/src/**/*.kt")

@@ -67,7 +67,7 @@ metadata, and the actual streaming is entirely the app's own problem.
 So the pieces split across unrelated mechanisms:
 
 | Want | Mechanism | Needs |
-|---|---|---|
+| --- | --- | --- |
 | Audio out | MediaProjection + our own RTSP/RTP | screen-capture consent |
 | Metadata out | `MediaSessionManager.getActiveSessions` | **notification listener** |
 | Control in | `MediaController.transportControls` | **notification listener** |
@@ -87,7 +87,7 @@ This is why the in-app dialog pushes harder than "it's just for track info".
 ## Everything else
 
 | Permission | Why |
-|---|---|
+| --- | --- |
 | `RECORD_AUDIO` | MediaProjection audio capture is gated on it, even though no microphone is used |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` | capture must run in a foreground service with the mediaProjection type |
 | `POST_NOTIFICATIONS` | the ongoing cast notification, which is also how you stop a cast |

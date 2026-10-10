@@ -1,0 +1,16 @@
+extends: default
+
+ignore-from-file: .gitignore
+
+rules:
+  # GitHub Actions' `on:` key is a trigger, not a boolean.
+  truthy:
+    check-keys: false
+  # Workflow files conventionally omit the `---` document start marker.
+  document-start: disable
+  # Room for shell steps in workflows; prose-style 80 columns is too tight there.
+  line-length:
+    max: 120
+  # Pinned actions carry their version as `@<sha> # vX.Y.Z` (Dependabot's format).
+  comments:
+    min-spaces-from-content: 1

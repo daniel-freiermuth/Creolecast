@@ -95,7 +95,7 @@ Then drive `AirPlay2Client.connect()` at the listener with a `Log` shim on the c
 Reference vectors worth re-checking after any change to the audio path:
 
 | Check | Expected |
-|---|---|
+| --- | --- |
 | ALAC frame, 352 samples 440 Hz stereo | 1416 bytes, SHA-256 `b2020989bbc304b2b5d38188fc40ce4a436d7de4f911a71a4dd1591d13a18c5e` |
 | ALAC header prefix | `200012000002c0` |
 
@@ -123,6 +123,7 @@ Not implemented. Each entry names the reference file to transcribe from. None is
 HomePod / Apple TV / AirPort Express, which are the devices we care about.
 
 ### Raw (legacy) binary pairing
+
 `pairing.go` — `rawPairSetup`, `completeRawSetupAndVerify`, AES-128-CTR.
 
 Roku- and LG-class receivers reject our HAP pair-setup with HTTP 500 and expect the original
@@ -132,12 +133,14 @@ plaintext afterwards. Probably not worth it: the existing AirPlay 1 (RAOP) path 
 those devices.
 
 ### HTTP Digest auth
+
 `digest.go` — RFC 2069 MD5, username always `"AirPlay"`, ~100 lines.
 
 For receivers that protect playback with a password rather than a pairing PIN. A 401 with a
 `WWW-Authenticate: Digest` challenge is currently a hard failure.
 
 ### AAC-ELD audio
+
 `audio.go` — `ct=8`, `spf=480`, `audioFormat=0x1000000`.
 
 We send uncompressed ALAC: 1416 bytes every 8 ms, roughly 1.4 Mbit/s. AAC-ELD would cut that
@@ -145,6 +148,7 @@ substantially. Needs an encoder — `MediaCodec` should manage it on Android. No
 forbids `redundantAudio` with AAC-ELD.
 
 ### Audio FEC / retransmission
+
 `audio.go` — `redundantAudio: 2`, retransmit request PT `0xd5`, response PT `0xd6`, 8-frame
 depth.
 
@@ -152,6 +156,7 @@ Packet-loss resilience on congested WiFi. Only offered for ALAC without ChaCha e
 the reference, so check the interaction with our encrypted path before adopting it.
 
 ### Encrypted event channel
+
 `event_channel.go`.
 
 We connect the event channel and parse volume and transport commands from it, but never

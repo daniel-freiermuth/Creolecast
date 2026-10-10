@@ -1,0 +1,16 @@
+config:
+  default: true
+  # Same limit as .editorconfig; tables and code blocks can't be wrapped.
+  MD013:
+    line_length: 100
+    tables: false
+    code_blocks: false
+  # README.md lays out its banner and note boxes in HTML. Only the elements it
+  # uses are allowed, so any other raw HTML is still flagged.
+  MD033:
+    allowed_elements: [a, b, br, code, div, h1, h2, hr, i, li, p, strong, ul]
+
+ignores:
+  - "**/build/**"
+  - "**/node_modules/**"
+  - "LICENSE.md"
