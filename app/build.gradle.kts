@@ -66,7 +66,21 @@ android {
     // Deterministic builds — strip timestamps and ordering variance from the APK
     // so the same source always produces a byte-identical artifact.
     lint {
+        // Every warning fails the build, including checks that are off by default, in test
+        // sources and in dependencies. Pre-existing findings live in lint-baseline.xml.
+        abortOnError = true
+        warningsAsErrors = true
+        checkAllWarnings = true
+        checkDependencies = true
+        checkTestSources = true
+        checkReleaseBuilds = true
+        explainIssues = true
+        baseline = file("lint-baseline.xml")
+        sarifReport = true
         disable += "MissingTranslation"
+        // "A newer version is available" would fail CI whenever an upstream releases,
+        // independent of the change under test. Dependabot proposes updates instead.
+        disable += setOf("NewerVersionAvailable", "GradleDependency", "AndroidGradlePluginVersion")
     }
     packaging {
         jniLibs { useLegacyPackaging = false }
