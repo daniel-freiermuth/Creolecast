@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <issue id="InvalidPackage">
+        <!-- BouncyCastle's JCE provider references javax.naming(.directory) only from LDAP
+             CRL/cert-store classes (CrlCache, X509LDAPCertStoreSpi); the app only uses the
+             lightweight crypto API and never reaches those code paths. -->
+        <ignore path="**/bcprov-jdk18on-*.jar" />
+        <!-- Ktor references java.lang.management only from IntellijIdeaDebugDetector, a
+             desktop-IDE debugger probe that is never invoked on Android. -->
+        <ignore path="**/ktor-utils-jvm-*.jar" />
+    </issue>
+    <issue id="OldTargetApi">
+        <!-- Raising targetSdk activates new platform behaviour and is a separate, tested
+             change for the maintainer, not part of lint cleanup. -->
+        <ignore path="build.gradle.kts" />
+    </issue>
+</lint>
