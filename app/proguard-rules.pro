@@ -9,10 +9,11 @@
 # original source file name.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
-# ---- BouncyCastle (AirPlay 2 pairing/crypto, RAOP encryption) ----
-# JCE providers and algorithms are looked up by string name via
-# Security.addProvider()/Cipher.getInstance(...), not by a direct reference
-# R8 can trace - keep the provider whole.
+# ---- BouncyCastle (AirPlay 2 pairing/crypto, FairPlay SAP) ----
+# Only the lightweight API (org.bouncycastle.crypto.*) is used, by direct reference;
+# nothing registers or looks up bcprov as a JCA provider (RAOP uses the platform
+# providers). This whole-package keep is conservative: narrowing it lets R8 shrink
+# bcprov, but must be checked with an AirPlay 2 pairing on a release build.
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
 
