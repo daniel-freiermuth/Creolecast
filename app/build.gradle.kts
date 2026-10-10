@@ -67,7 +67,7 @@ android {
     // so the same source always produces a byte-identical artifact.
     lint {
         // Every warning fails the build, including checks that are off by default, in test
-        // sources and in dependencies. Pre-existing findings live in lint-baseline.xml.
+        // sources and in dependencies. Deliberate exceptions live in lint.xml.
         abortOnError = true
         warningsAsErrors = true
         checkAllWarnings = true
@@ -75,7 +75,6 @@ android {
         checkTestSources = true
         checkReleaseBuilds = true
         explainIssues = true
-        baseline = file("lint-baseline.xml")
         lintConfig = file("lint.xml")
         sarifReport = true
         disable += "MissingTranslation"
@@ -101,12 +100,10 @@ kotlin {
 
 // Static analysis: detekt's default rules plus the bug-catching opt-ins enabled in
 // config/detekt/detekt.yml (which also lists every deviation), with type resolution via
-// detektMain / detektTest. Pre-existing findings are grandfathered in the baseline files,
-// so only new code has to be clean.
+// detektMain / detektTest. No baseline: every finding fails the build.
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
-    baseline = file("detekt-baseline.xml")
     // Parallel analysis crashes 2.0.0-alpha.6 intermittently (ArrayIndexOutOfBounds in
     // 2 of 4 runs; 5 of 5 pass without it). Re-enable once fixed upstream.
     parallel = false

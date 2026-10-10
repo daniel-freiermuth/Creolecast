@@ -86,11 +86,10 @@ CI runs these on every pull request; run them locally before pushing:
 ./gradlew spotlessCheck detektMain detektTest lintDebug testDebugUnitTest assembleDebug
 ```
 
-- **ktlint** (via Spotless) formats; **detekt** (all rules) and **Android Lint** (warnings
-  as errors) analyse; Kotlin compiler warnings fail the build. Existing detekt and Lint
-  findings are grandfathered in `app/detekt-baseline-*.xml` and `app/lint-baseline.xml`, so
-  only new code has to be clean. Regenerate a baseline only when deliberately accepting
-  findings: `./gradlew detektBaselineMain detektBaselineTest` or `./gradlew updateLintBaseline`.
+- **ktlint** (via Spotless) formats; **detekt** (defaults plus bug-catching opt-ins, see
+  `config/detekt/detekt.yml`) and **Android Lint** (warnings as errors, `app/lint.xml`)
+  analyse; Kotlin compiler warnings fail the build. There are no baselines: fix findings,
+  or suppress one at the narrowest scope with a comment saying why the rule doesn't apply.
 - Repository checks (`.github/workflows/repo-checks.yml`): actionlint and zizmor for
   workflows, gitleaks for secrets, markdownlint, yamllint and editorconfig-checker. Their
   configs live in the repository root and `.github/`.

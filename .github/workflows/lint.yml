@@ -48,7 +48,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./gradlew lintDebug
 
-      # Annotates new findings on the PR. Baselined findings are not in the SARIF.
+      # Annotates findings on the PR.
       - name: Upload detekt SARIF (main)
         if: >-
           !cancelled() && env.CAN_UPLOAD_SARIF == 'true'
