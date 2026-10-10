@@ -21,7 +21,7 @@ Deliberate divergences for an audio-only sender: we omit `isScreenMirroringSessi
 
 ## What works
 
-Verified against doubletake's own test receiver:
+Verified against doubletake's test receiver and/or shairport-sync (see Testing):
 
 - HomeKit PIN pair-setup (HKP 5): full M1–M6 followed by pair-verify
 - Transient pair-setup (HKP 4) **diverges from the reference**, and is verified against
@@ -35,15 +35,50 @@ Verified against doubletake's own test receiver:
 - ChaCha20-Poly1305 framed RTSP control channel
 - FairPlay SAP (`/fp-setup`), skipped when feature bit 14 is absent
 - PTP/NTP timing negotiation, including an NTP timing responder
+- PTP media clock (`MediaClock`, port of `mirror.go` `mediaClock`): follows a receiver that
+  publishes `timingPeerInfo.ClockID` by anchoring on the SETUP reply's
+  `X-Apple-RequestReceivedTimestamp` + `X-Apple-ProcessingTime`. It re-anchors on stream
+  SETUP and every `/feedback` reply, never moving backwards, and falls back to the local
+  clock when those headers are absent. 0xd7 sync packets are stamped from it.
+- PTP master (`PtpMaster`, not in the reference; owntone's approach): for receivers that
+  publish no `ClockID` and follow the sender instead (shairport-sync + nqptp). It sends unicast
+  Announce every 250 ms and Sync + Follow_Up every 125 ms from UDP 319/320, with clock identity
+  = EUI-64 of our device ID. `connect()` waits ~0.9 s for the receiver to lock on before the
+  first anchor, otherwise the start of the stream is dropped as out of date.
+- Realtime ALAC is sent at 44100 Hz / 352 frames, as `audioFormat` 0x40000 requires; the
+  recorder and `AirPlay2Client` share `AudioCastService.captureSampleRate`
 - Both audio stream descriptor layouts (`streamConnections` vs `controlPort`)
 - ALAC verbatim frames, byte-identical to the reference encoder
 - Per-packet audio encryption with the published `shk`
 
 ## Testing
 
-There is no unit-test suite for this; the protocol is only meaningfully testable against a
-receiver. The `airplay2` package is deliberately pure JVM (no `android.*` imports outside
-`AndroidCredentialStore.kt`) so it can run on the desktop.
+Unit tests cover the pure parts (`SRP6aClientTest`, `TlvUtilTest`, `BinaryPlistTest`,
+`AirPlay2CryptoTest`, `MediaClockTest`). The protocol itself is only meaningfully testable
+against a receiver. The `airplay2` package needs only `android.util.Log` (and
+`AndroidCredentialStore.kt`), so it runs on the desktop JVM with a small `Log` shim.
+
+### shairport-sync (end-to-end, sender as PTP master)
+
+Requires shairport-sync built with AirPlay 2 support, plus nqptp. Both the receiver's nqptp
+and our `PtpMaster` need UDP 319/320, so they can't share a network namespace. Use rootless
+namespaces:
+
+- **Receiver namespace** (`unshare --map-root-user --map-users=1:100000:65535
+  --map-groups=1:100000:65535 -nm`; the full uid map lets avahi `chown` its runtime dir):
+  mount tmpfs on `/dev/shm` and `/run`, start a private `dbus-daemon` (permissive config
+  listening on `/run/dbus/system_bus_socket`), `avahi-daemon --no-drop-root --no-chroot`,
+  `nqptp`, then `shairport-sync` with the `pipe` backend. shairport-sync aborts if mDNS
+  registration fails.
+- **Client namespace**: a nested `unshare -n` joined by a veth pair, e.g. receiver 10.9.0.2,
+  client 10.9.0.1. Run the JVM client there. Stop the host Gradle daemon first: its cache-lock
+  handshake can't cross network namespaces.
+
+The pipe backend writes S32_LE stereo at 48 kHz. Verified: a 10 s 1 kHz tone arrives complete
+(9.993 s audible against 9.993 s sent), at the correct pitch, with no dropped packets and no
+discontinuities.
+
+### doubletake test receiver
 
 Build the reference receiver:
 
@@ -56,9 +91,8 @@ cd /tmp/doubletake && go build -o /tmp/ap2-receiver ./cmd/doubletake-test-receiv
 Profiles: `modern`, `roku`, `lg`, `appletv3`, `uxplay`, `airserver`.
 Auth modes: `none`, `pin`, `password`, `digest`, `combined`.
 
-Then compile the `airplay2` sources with a standalone `kotlinc`, BouncyCastle, and a small
-`android.util.Log` / `android.util.Base64` shim, and drive `AirPlay2Client.connect()` at the
-listener. Reference vectors worth re-checking after any change to the audio path:
+Then drive `AirPlay2Client.connect()` at the listener with a `Log` shim on the classpath.
+Reference vectors worth re-checking after any change to the audio path:
 
 | Check | Expected |
 |---|---|
@@ -70,17 +104,18 @@ reference side.
 
 ### Known verification gaps
 
-- **No real Apple hardware has been tested.** Everything below is inference from the reference.
-- `SET_PARAMETER` and `POST /feedback` return RTSP 455 against the test receiver. That is a
-  harness limitation, not a client bug: its session state machine only reaches `ready` after a
-  *video* SETUP, which an audio-only sender never sends. Volume and keepalive are therefore
-  unproven.
-- **shairport-sync (AirPlay 2 build, 5.0.x)**: transient pair-setup, encrypted control
-  channel and FairPlay SAP pass. The session then stops at stream SETUP: shairport-sync only
-  accepts PTP timing and expects the *sender* to be the PTP master that nqptp follows. Its
-  `timingPeerInfo` has no `ClockID`, and we run no PTP master, so `connect()` fails with
-  "PTP SETUP response omitted timingPeerInfo.ClockID". NTP streams are rejected outright
-  (`rtsp.c`: "Shairport Sync can not handle NTP streams").
+- **No real Apple hardware has been tested.** Following a receiver-owned PTP clock
+  (`MediaClock.configureFromSetup`) has been checked only against doubletake's SETUP reply
+  (ClockID + clock headers parsed), not with audio playing.
+- `RECORD`, `SET_PARAMETER` and `POST /feedback` return RTSP 455 against the doubletake test
+  receiver. That is a harness limitation, not a client bug: its session state machine only
+  reaches `ready` after a *video* SETUP, which an audio-only sender never sends.
+- shairport-sync ignores our metadata: it answers the binary-plist `SET_PARAMETER` with
+  "unknown Content-Type". It warns that our 85 ms stream latency (`LATENCY_SAMPLES`, from the
+  reference) is shorter than its default 1 s pipe-backend buffer; playback was unaffected.
+- `PtpMaster` needs UDP 319/320. Unprivileged Android apps may bind them only from Android 13
+  with an updated connectivity mainline module and kernel ≥ 5.15 (issuetracker 218578943).
+  Elsewhere, casting to a receiver without a `ClockID` fails at SETUP with a logged reason.
 
 ## Backlog
 
@@ -123,21 +158,3 @@ We connect the event channel and parse volume and transport commands from it, bu
 enable HAP framing on that socket after pair-verify. Receivers that encrypt it will just look
 like garbage and get dropped — harmless today, but it means remote volume and play/pause from
 the speaker may silently not work. This is the most likely of these to actually bite a user.
-
-### PTP media clock (receiver timeline)
-`mirror.go` — `mediaClock`: `configureFromSetup`, `reanchor`, `configureFromLocalClock`.
-
-Not ported, and it's the main timing gap. The reference maps local monotonic time onto the
-receiver's PTP timeline. It anchors on the SETUP response's `X-Apple-RequestReceivedTimestamp`
-plus `X-Apple-ProcessingTime` (the receiver's boot-relative clock), re-anchors from every
-`/feedback` response without ever moving backwards, and falls back to the local boot clock when
-those headers are missing. Our `sendSyncPacket` instead stamps `System.currentTimeMillis()`
-converted to the NTP epoch. That's the wrong timescale for a PTP timeline, so anchors land far
-from the receiver's "now".
-
-### PTP master
-Not in the reference either: it always needs the receiver's `ClockID`. Receivers that follow the
-sender's clock (shairport-sync + nqptp) need the app to run as an IEEE 1588 master
-(Announce/Sync/Follow_Up on UDP 319/320). It would then advertise its own `ClockID` in
-`timingPeerInfo` and stamp sync packets on that timeline. owntone does this with its own PTP
-daemon.
