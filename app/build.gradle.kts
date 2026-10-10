@@ -38,7 +38,7 @@ android {
     defaultConfig {
         applicationId = "com.creolecast.app"
         minSdk = 34
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 15
         versionName = "1.0.0"
 
