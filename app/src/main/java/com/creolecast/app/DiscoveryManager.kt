@@ -8,7 +8,7 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import com.creolecast.app.raop.RaopDiscovery
 import java.net.Inet4Address
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.net.InetAddress
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,103 +41,45 @@ class DiscoveryManager(
     private var multicastLock: WifiManager.MulticastLock? = null
 
     private val discoveredServers = mutableMapOf<String, Server>()
-    private val resolveQueue = ConcurrentLinkedQueue<NsdServiceInfo>()
-    private var activeResolves = 0
     private var discoveryJob: Job? = null
-    private val activeListeners = mutableListOf<NsdManager.DiscoveryListener>()
     private var raopDiscovery: RaopDiscovery? = null
     private val audioCastDiscovery = AudioCastBroadcastDiscovery(ioDispatcher) { server ->
         putFound(server.name, server)
     }
     private val ssdpDiscovery = SsdpDiscovery(ioDispatcher, ::addDlnaRenderer)
-
-    private fun createNsdListener() = object : NsdManager.DiscoveryListener {
-        override fun onDiscoveryStarted(serviceType: String) {
+    private val nsdBrowser = NsdBrowser(
+        nsdManager,
+        onDiscoveryStarted = {
             if (_state.value != DiscoveryState.FOUND) {
                 _state.value = DiscoveryState.SCANNING
             }
-            Log.d(TAG, "Discovery started: $serviceType")
-        }
+        },
+        onUpdated = ::handleResolvedService,
+        onLost = ::removeNsdEntry
+    )
 
-        override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-            Log.d(TAG, "Service found: ${serviceInfo.serviceName} (${serviceInfo.serviceType})")
-            resolveQueue.add(serviceInfo)
-            processResolveQueue()
-        }
+    /**
+     * The [discoveredServers] key each NSD service is currently stored under, by
+     * [NsdBrowser] service id. Guarded by [discoveredServers]. The key is not derivable
+     * from the service alone (it may be name-disambiguated with the host), and an update
+     * or loss must replace or remove exactly that entry.
+     */
+    private val nsdEntryKeys = mutableMapOf<String, String>()
 
-        override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-            Log.d(TAG, "Service lost: ${serviceInfo.serviceName}")
-            val nameToRemove =
-                MdnsServers.lostServiceKey(serviceInfo.serviceType, serviceInfo.serviceName)
-            synchronized(discoveredServers) {
-                discoveredServers.remove(nameToRemove)
-                _servers.value = discoveredServers.values.toList()
-                if (discoveredServers.isEmpty()) {
-                    _state.value = DiscoveryState.NONE
-                }
+    private fun removeNsdEntry(id: String) {
+        synchronized(discoveredServers) {
+            val key = nsdEntryKeys.remove(id) ?: return
+            discoveredServers.remove(key)
+            _servers.value = discoveredServers.values.toList()
+            if (discoveredServers.isEmpty()) {
+                _state.value = DiscoveryState.NONE
             }
         }
-
-        override fun onDiscoveryStopped(serviceType: String) {
-            Log.d(TAG, "Discovery stopped: $serviceType")
-        }
-
-        override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-            Log.e(TAG, "NSD discovery start failed: $errorCode")
-        }
-
-        override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-            Log.e(TAG, "NSD discovery stop failed: $errorCode")
-        }
     }
 
-    private fun processResolveQueue() {
-        if (activeResolves >= MAX_CONCURRENT_RESOLVES || resolveQueue.isEmpty()) return
-
-        val serviceInfo = resolveQueue.poll() ?: return
-        activeResolves++
-
-        try {
-            // Deprecated in API 34; the migration to registerServiceInfoCallback is PR #36.
-            @Suppress("DEPRECATION")
-            nsdManager.resolveService(
-                serviceInfo,
-                object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
-                        Log.e(TAG, "Resolve failed: $errorCode for ${si.serviceName}")
-                        activeResolves--
-                        if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE) {
-                            scope.launch {
-                                delay(RESOLVE_RETRY_DELAY_MS)
-                                resolveQueue.add(si)
-                                processResolveQueue()
-                            }
-                        } else {
-                            processResolveQueue()
-                        }
-                    }
-
-                    override fun onServiceResolved(si: NsdServiceInfo) {
-                        activeResolves--
-                        handleResolvedService(si)
-                        processResolveQueue()
-                    }
-                }
-            )
-        } catch (e: IllegalArgumentException) {
-            Log.e(TAG, "Could not resolve ${serviceInfo.serviceName}", e)
-            activeResolves--
-            processResolveQueue()
-        }
-    }
-
-    private fun handleResolvedService(serviceInfo: NsdServiceInfo) {
+    private fun handleResolvedService(id: String, serviceInfo: NsdServiceInfo) {
         val serviceName = serviceInfo.serviceName ?: return
-
-        // Deprecated in API 34 in favour of hostAddresses; migrated together with PR #36.
-        @Suppress("DEPRECATION")
-        val hostAddress = serviceInfo.host?.hostAddress?.takeUnless { isLoopbackHost(it) }
-            ?: return
+        val hostAddress = preferredHostAddress(serviceInfo.hostAddresses) ?: return
 
         val server = MdnsServers.fromResolvedService(
             serviceInfo.serviceType,
@@ -151,6 +93,11 @@ class DiscoveryManager(
         } else {
             val name = server.name
             synchronized(discoveredServers) {
+                // onServiceUpdated fires again whenever addresses or TXT records change.
+                // Drop this service's previous entry first so a new address replaces it
+                // instead of reading as a second device claiming the same name below.
+                nsdEntryKeys.remove(id)?.let { discoveredServers.remove(it) }
+
                 // A different device advertising the same friendly name must not silently
                 // take over an already-discovered entry's host - that's exactly how mDNS
                 // name spoofing would redirect a user who trusts a familiar name into
@@ -165,6 +112,7 @@ class DiscoveryManager(
 
                 val isRaop = serviceInfo.serviceType.contains("_raop")
                 putFound(key, MdnsServers.merged(discoveredServers[key], candidate, isRaop))
+                nsdEntryKeys[id] = key
             }
         }
     }
@@ -201,6 +149,7 @@ class DiscoveryManager(
         stopDiscovery()
         synchronized(discoveredServers) {
             discoveredServers.clear()
+            nsdEntryKeys.clear()
             _servers.value = emptyList()
         }
 
@@ -226,17 +175,7 @@ class DiscoveryManager(
 
         discoveryJob = scope.launch {
             // Initial burst
-            launch {
-                services.forEach { type ->
-                    try {
-                        val listener = createNsdListener()
-                        synchronized(activeListeners) { activeListeners.add(listener) }
-                        nsdManager.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener)
-                    } catch (e: IllegalArgumentException) {
-                        Log.e(TAG, "Discovery failed for $type", e)
-                    }
-                }
-            }
+            launch { nsdBrowser.start(services) }
 
             launch { audioCastDiscovery.run() }
             if (prefs.getBoolean("dlna_enabled", false)) {
@@ -295,23 +234,11 @@ class DiscoveryManager(
         discoveryJob?.cancel()
         discoveryJob = null
 
-        synchronized(activeListeners) {
-            activeListeners.forEach { listener ->
-                try {
-                    nsdManager.stopServiceDiscovery(listener)
-                } catch (e: IllegalArgumentException) {
-                    // The listener's discovery never started or has already failed.
-                    Log.d(TAG, "NSD listener was not discovering", e)
-                }
-            }
-            activeListeners.clear()
-        }
+        nsdBrowser.stop()
 
         // Only ever acquired once per startDiscovery(), which stops first, so a held
         // lock is released exactly once and cannot be under-locked.
         if (multicastLock?.isHeld == true) multicastLock?.release()
-        resolveQueue.clear()
-        activeResolves = 0
     }
 
     /**
@@ -365,17 +292,12 @@ class DiscoveryManager(
 
     companion object {
         private const val TAG = "DiscoveryManager"
-        private const val MAX_CONCURRENT_RESOLVES = 3
-        private const val RESOLVE_RETRY_DELAY_MS = 1000L
         private const val MIN_SCANNING_MS = 15_000L
 
         // URLs are built as "http://$host:$port", so only IPv4 literals are accepted (an IPv6
         // literal would need brackets), matching the previous Patterns.IP_ADDRESS check.
         private fun isIpv4Literal(host: String): Boolean = InetAddresses.isNumericAddress(host) &&
             InetAddresses.parseNumericAddress(host) is Inet4Address
-
-        private fun isLoopbackHost(hostAddress: String): Boolean =
-            hostAddress == "127.0.0.1" || hostAddress == "::1" || hostAddress.contains("localhost")
 
         /**
          * Stable identity of a discovered server: the tuple that actually distinguishes
@@ -386,6 +308,17 @@ class DiscoveryManager(
          */
         internal fun identityOf(server: Server): String =
             "${server.host}:${server.port}:${server.platform.label}:${server.name}"
+
+        /**
+         * Picks the address to connect to from all of a service's advertised addresses.
+         * IPv4 wins over IPv6 because the session code builds plain "host:port" URLs and
+         * RTSP URIs, which an IPv6 literal (or a scoped link-local one) would break.
+         * Loopback addresses are never a remote receiver and are skipped.
+         */
+        internal fun preferredHostAddress(addresses: List<InetAddress>): String? {
+            val remote = addresses.filterNot { it.isLoopbackAddress }
+            return (remote.firstOrNull { it is Inet4Address } ?: remote.firstOrNull())?.hostAddress
+        }
     }
 }
 
