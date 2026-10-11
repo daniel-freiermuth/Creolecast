@@ -1,6 +1,7 @@
 package com.creolecast.app.airplay2
 
 import android.util.Log
+import com.creolecast.app.raop.AlacEncoder
 import java.io.Closeable
 import java.io.IOException
 import java.net.DatagramPacket
@@ -89,7 +90,7 @@ internal class AirPlay2AudioStream(
     }
 
     fun sendFrame(pcm: ByteArray): Boolean = try {
-        val packet = buildRtpPacket(AlacVerbatimEncoder.encode(pcm))
+        val packet = buildRtpPacket(AlacEncoder.encodeUncompressed(pcm, hasSize = true))
         val target = socket
         if (target != null) {
             val datagram = key?.let { seal(packet, it) } ?: packet
