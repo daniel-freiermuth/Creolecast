@@ -1,6 +1,7 @@
 package com.creolecast.app.cast
 
 import com.creolecast.app.AudioCastService
+import com.creolecast.app.raop.AlacEncoder
 import com.creolecast.app.raop.RaopCrypto
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -44,7 +45,7 @@ internal class RaopAudioSender(
     }
 
     private fun send(pcmFrame: ByteArray) {
-        var alacFrame = RaopAlac.encodeUncompressed(pcmFrame)
+        var alacFrame = AlacEncoder.encodeUncompressed(pcmFrame, hasSize = false)
         crypto?.let { alacFrame = it.encryptAudio(alacFrame) }
 
         val rtpHeader = ByteBuffer.allocate(RTP_HEADER_BYTES).apply {
