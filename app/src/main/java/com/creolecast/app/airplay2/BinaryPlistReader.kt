@@ -48,6 +48,11 @@ internal class BinaryPlistReader(private val data: ByteArray) {
     private val objectOffsets: IntArray
     private var depth = 0
 
+    // Each object is decoded once and shared by every ref to it. Decoding per
+    // ref lets a few KB of collections that reference the next level many
+    // times expand exponentially and exhaust memory.
+    private val decoded = HashMap<Int, Any?>()
+
     init {
         require(data.size >= MIN_SIZE) { "too short" }
         val magic = data.copyOf(HEADER.length).toString(Charsets.UTF_8)
@@ -80,10 +85,13 @@ internal class BinaryPlistReader(private val data: ByteArray) {
     }
 
     private fun readObject(objIndex: Int): Any? {
+        if (decoded.containsKey(objIndex)) return decoded[objIndex]
         require(depth < MAX_NESTING_DEPTH) { "binary plist nested too deeply" }
         depth++
         try {
-            return readObjectAt(objIndex)
+            // Stored only once complete, so a reference cycle still recurses
+            // into the depth limit above.
+            return readObjectAt(objIndex).also { decoded[objIndex] = it }
         } finally {
             depth--
         }
