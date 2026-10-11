@@ -43,22 +43,25 @@ internal class ReceiverProtocols(
         }
     }
 
-    /** Asks each receiver of the ending cast to stop, in parallel; the jobs end when sent. */
+    /**
+     * Asks each receiver of the ending cast to stop, in parallel; the jobs end when sent.
+     * RAOP connections are captured here, on the caller's thread: the caller clears the
+     * registry right after, possibly before the jobs have run.
+     */
     fun stopAll(destinations: List<CastDestination>): List<Job> = destinations.map { dest ->
-        ctx.scope.launch { bestEffort("Stopping ${dest.name}") { stop(dest) } }
+        val raopTeardown = if (speaksRaop(dest)) ctx.raop.captureTeardown(dest) else null
+        ctx.scope.launch { bestEffort("Stopping ${dest.name}") { stop(dest, raopTeardown) } }
     }
 
-    private suspend fun stop(dest: CastDestination) {
+    private suspend fun stop(dest: CastDestination, raopTeardown: (() -> Unit)?) {
         when (dest.platform) {
             "AirPlay2" -> ctx.airPlay2[dest.host]?.teardown()
-
             "DLNA" -> dlna.stop(dest)
-
             "Google Cast" -> googleCast.stop(dest)
-
-            "AirPlay" -> if (dest.port == RAOP_PORT || dest.name.contains("@")) {
-                ctx.raop.teardown(dest)
-            }
+            "AirPlay" -> raopTeardown?.invoke()
         }
     }
+
+    private fun speaksRaop(dest: CastDestination) =
+        dest.platform == "AirPlay" && (dest.port == RAOP_PORT || dest.name.contains("@"))
 }

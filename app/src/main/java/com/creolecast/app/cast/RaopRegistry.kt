@@ -90,27 +90,45 @@ internal class RaopRegistry {
 
     /** Sends TEARDOWN for [dest] if its control connection is still open. */
     fun teardown(dest: CastDestination) {
-        val socket = sockets[dest.host]
-        if (socket == null || socket.isClosed) return
-        try {
-            val output = socket.getOutputStream()
-            synchronized(output) {
-                RtspWire.send(
-                    output,
-                    RtspRequest(
-                        "TEARDOWN",
-                        dest.host,
-                        dest.port,
-                        cseqs[dest.host] ?: 1,
-                        mapOf(
-                            "Session" to sessions[dest.host].orEmpty(),
-                            "User-Agent" to TEARDOWN_USER_AGENT
+        captureTeardown(dest)?.invoke()
+    }
+
+    /**
+     * Takes [dest]'s control connection and session id now and returns the TEARDOWN send
+     * for them, or null without a connection. Stopping a cast runs that send on another
+     * thread, after [clear] may already have emptied the registry; looking the connection
+     * up only then would find nothing and silently skip the TEARDOWN.
+     */
+    fun captureTeardown(dest: CastDestination): (() -> Unit)? {
+        val socket = sockets[dest.host] ?: return null
+        val session = sessions[dest.host].orEmpty()
+        val capturedCSeq = cseqs[dest.host]
+        return send@{
+            if (socket.isClosed) return@send
+            try {
+                val output = socket.getOutputStream()
+                synchronized(output) {
+                    // The live CSeq while the socket is still registered, so a volume or
+                    // metadata command sent since the capture is honoured; never another
+                    // connection's.
+                    val cseq = if (sockets[dest.host] === socket) cseqs[dest.host] else capturedCSeq
+                    RtspWire.send(
+                        output,
+                        RtspRequest(
+                            "TEARDOWN",
+                            dest.host,
+                            dest.port,
+                            cseq ?: 1,
+                            mapOf(
+                                "Session" to session,
+                                "User-Agent" to TEARDOWN_USER_AGENT
+                            )
                         )
                     )
-                )
+                }
+            } catch (e: IOException) {
+                Log.d(LOG_TAG, "RAOP TEARDOWN to ${dest.host} failed: ${e.reason}")
             }
-        } catch (e: IOException) {
-            Log.d(LOG_TAG, "RAOP TEARDOWN to ${dest.host} failed: ${e.reason}")
         }
     }
 
