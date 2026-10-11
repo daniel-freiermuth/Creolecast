@@ -9,6 +9,13 @@ import org.junit.Test
 
 class BinaryPlistTest {
 
+    // {"a": object 2} and the "a" it refers to, for plist() below.
+    private val dictAToObject2 = bytes(0xD1, 1, 2)
+    private val stringA = bytes(0x51, 'a'.code)
+
+    // {"a": true}
+    private val aIsTrue = listOf(dictAToObject2, stringA, bytes(0x09))
+
     @Test
     fun `encode and decode round-trip simple strings`() {
         val input = mapOf("title" to "Test Track", "artist" to "Test Artist")
@@ -87,22 +94,22 @@ class BinaryPlistTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `decode rejects a trailer object count beyond the data`() {
-        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), objectCount = 0x7FFFFFFF))
+        BinaryPlist.decode(plist(aIsTrue, objectCount = 0x7FFFFFFF))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `decode rejects a root index outside the object table`() {
-        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), rootIndex = 3))
+        BinaryPlist.decode(plist(aIsTrue, rootIndex = 3))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `decode rejects an offset table past the end of the data`() {
-        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), offsetTableOffset = 0x7FFFFFF0))
+        BinaryPlist.decode(plist(aIsTrue, offsetTableOffset = 0x7FFFFFF0))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `decode rejects an object offset past the end of the data`() {
-        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), objectOffsets = listOf(8, 11, 60000)))
+        BinaryPlist.decode(plist(aIsTrue, objectOffsets = listOf(8, 11, 60000)))
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -120,10 +127,12 @@ class BinaryPlistTest {
         val levels = (0 until depth).map { level ->
             bytes(0xAF, 0x10, width) + ByteArray(width) { (3 + level).toByte() }
         }
-        val decoded = BinaryPlist.decode(plist(listOf(dictAToObject2, stringA) + levels + bytes(0x09)))
+        val decoded = BinaryPlist.decode(
+            plist(listOf(dictAToObject2, stringA) + levels + bytes(0x09))
+        )
         var node: Any? = decoded["a"]
         repeat(depth) {
-            val list = node as List<*>
+            val list = (node as? List<*>).orEmpty()
             assertEquals(width, list.size)
             node = list.first()
         }
@@ -273,11 +282,9 @@ class BinaryPlistTest {
         assertEquals(1, (decoded["timingPeerList"] as? List<*>)?.size)
     }
 
-    private fun bytes(vararg values: Int): ByteArray = ByteArray(values.size) { values[it].toByte() }
-
-    // {"a": object 2} and the "a" it refers to, for plist() below.
-    private val dictAToObject2 = bytes(0xD1, 1, 2)
-    private val stringA = bytes(0x51, 'a'.code)
+    private fun bytes(vararg values: Int): ByteArray = ByteArray(values.size) {
+        values[it].toByte()
+    }
 
     /**
      * Lays [objects] out as a bplist00 with 2-byte offsets and 1-byte refs.
