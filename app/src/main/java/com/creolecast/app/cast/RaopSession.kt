@@ -34,8 +34,40 @@ private const val AES_KEY_BYTES = 16
 /** RTSP control channel of one session: the receiver's streams and the port it answered on. */
 private class RtspControl(val input: InputStream, val output: OutputStream, val port: Int)
 
-/** The receiver's UDP ports from the SETUP response's Transport header. */
-private data class ServerPorts(val audio: Int, val control: Int, val timing: Int)
+/** The receiver's UDP ports from the SETUP response's Transport header; 0 when absent. */
+internal data class ServerPorts(val audio: Int, val control: Int, val timing: Int)
+
+/** The RTSP control ports to try, in order, for a receiver advertising [port] (0 = none). */
+internal fun controlPortCandidates(port: Int): List<Int> {
+    val advertisedPort = if (port > 0) port else RAOP_PORT
+    return if (advertisedPort == AIRPLAY_PORT) {
+        listOf(AIRPLAY_PORT, RAOP_PORT)
+    } else {
+        listOf(advertisedPort)
+    }
+}
+
+/** The Session id of a SETUP response without its `;timeout=` parameter; null when absent. */
+internal fun parseSessionId(setupResponse: List<String>): String? =
+    setupResponse.find { it.startsWith("Session:", true) }
+        ?.substringAfter(":")?.substringBefore(";")?.trim()
+
+internal fun parseServerPorts(setupResponse: List<String>): ServerPorts {
+    val transport = setupResponse.find { it.startsWith("Transport:", true) }
+        ?.substringAfter(":").orEmpty()
+    var audio = 0
+    var control = 0
+    var timing = 0
+    transport.split(";").forEach { part ->
+        val port = part.substringAfter("=").toIntOrNull() ?: 0
+        when {
+            part.trim().startsWith("server_port=") -> audio = port
+            part.trim().startsWith("control_port=") -> control = port
+            part.trim().startsWith("timing_port=") -> timing = port
+        }
+    }
+    return ServerPorts(audio, control, timing)
+}
 
 /** The session AES key: the cipher for audio, and the SDP lines announcing it. */
 private class RaopEncryption(val crypto: RaopCrypto, val sdpLines: String)
@@ -128,8 +160,7 @@ internal class RaopSession(
                     "control_port=${controlUdp.localPort};timing_port=${timingUdp.localPort}"
             )
         )
-        val session = setupResponse.find { it.startsWith("Session:", true) }
-            ?.substringAfter(":")?.substringBefore(";")?.trim()
+        val session = parseSessionId(setupResponse)
         ctx.raop.setSession(dest.host, session)
         val ports = parseServerPorts(setupResponse)
         Log.d(
@@ -170,12 +201,7 @@ internal class RaopSession(
     // so `use` would cut that TEARDOWN off.
     @Suppress("MissingUseCall")
     private fun openControlChannel(): RtspControl {
-        val advertisedPort = if (dest.port > 0) dest.port else RAOP_PORT
-        val ports = if (advertisedPort == AIRPLAY_PORT) {
-            listOf(AIRPLAY_PORT, RAOP_PORT)
-        } else {
-            listOf(advertisedPort)
-        }
+        val ports = controlPortCandidates(dest.port)
         val socket = connectFirstReachable(ports)
         socket.soTimeout = CONTROL_READ_TIMEOUT_MS
         socket.tcpNoDelay = true
@@ -248,23 +274,6 @@ internal class RaopSession(
             RtspRequest(method, dest.host, control.port, cseq++, commonHeaders + headers, body)
         )
         return RtspWire.readResponse(control.input)
-    }
-
-    private fun parseServerPorts(setupResponse: List<String>): ServerPorts {
-        val transport = setupResponse.find { it.startsWith("Transport:", true) }
-            ?.substringAfter(":").orEmpty()
-        var audio = 0
-        var control = 0
-        var timing = 0
-        transport.split(";").forEach { part ->
-            val port = part.substringAfter("=").toIntOrNull() ?: 0
-            when {
-                part.trim().startsWith("server_port=") -> audio = port
-                part.trim().startsWith("control_port=") -> control = port
-                part.trim().startsWith("timing_port=") -> timing = port
-            }
-        }
-        return ServerPorts(audio, control, timing)
     }
 
     /** Failure after connecting: best-effort TEARDOWN, then drop the control connection. */
