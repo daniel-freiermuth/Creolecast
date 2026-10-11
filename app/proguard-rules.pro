@@ -31,7 +31,3 @@
 -keepclassmembers class com.creolecast.app.** {
     *** Companion;
 }
-
-# ---- JmDNS (RaopDiscovery.kt) ----
--keep class javax.jmdns.** { *; }
--dontwarn javax.jmdns.**
