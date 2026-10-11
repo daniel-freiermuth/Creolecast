@@ -6,8 +6,6 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
-import com.creolecast.app.raop.RAOP_SESSION_TXT_KEYS
-import com.creolecast.app.raop.RaopDiscovery
 import java.net.Inet4Address
 import java.net.InetAddress
 import kotlinx.coroutines.CoroutineDispatcher
@@ -43,7 +41,6 @@ class DiscoveryManager(
 
     private val discoveredServers = mutableMapOf<String, Server>()
     private var discoveryJob: Job? = null
-    private var raopDiscovery: RaopDiscovery? = null
     private val audioCastDiscovery = AudioCastBroadcastDiscovery(ioDispatcher) { server ->
         putFound(server.name, server)
     }
@@ -56,7 +53,7 @@ class DiscoveryManager(
                 _state.value = DiscoveryState.SCANNING
             }
         },
-        onUpdated = ::handleResolvedService,
+        onUpdated = ::onNsdServiceUpdated,
         onLost = ::removeNsdEntry
     )
 
@@ -76,6 +73,21 @@ class DiscoveryManager(
             if (discoveredServers.isEmpty()) {
                 _state.value = DiscoveryState.NONE
             }
+        }
+    }
+
+    private fun onNsdServiceUpdated(id: String, serviceInfo: NsdServiceInfo) {
+        if (MdnsServers.isUnsupportedRaop(serviceInfo.serviceType, serviceInfo.attributes)) {
+            val encryptionTypes = serviceInfo.attributes["et"]?.decodeToString().orEmpty()
+            Log.w(
+                TAG,
+                "RAOP ${serviceInfo.serviceName} needs FairPlay/MFi encryption " +
+                    "(et=$encryptionTypes), skipping"
+            )
+            // A TXT update can withdraw RSA from a receiver that is already listed.
+            removeNsdEntry(id)
+        } else {
+            handleResolvedService(id, serviceInfo)
         }
     }
 
@@ -172,7 +184,7 @@ class DiscoveryManager(
             services.add("_airplay._tcp")
         }
         if (prefs.getBoolean("airplay_enabled", false)) {
-            startRaopDiscovery()
+            services.add("_raop._tcp")
         }
         if (prefs.getBoolean("google_cast_enabled", false)) {
             services.add("_googlecast._tcp")
@@ -214,38 +226,12 @@ class DiscoveryManager(
         }
     }
 
-    private fun startRaopDiscovery() {
-        raopDiscovery = RaopDiscovery(context)
-        raopDiscovery?.start { device ->
-            val server = Server(
-                name = device.name,
-                host = device.host,
-                port = device.port,
-                version = device.model ?: "1.0",
-                codecs = listOf("PCM"),
-                sampleRate = device.sampleRate,
-                channels = 2,
-                platform = CastPlatform.AIRPLAY,
-                extra = ExtraFields.join(
-                    RAOP_SESSION_TXT_KEYS.mapNotNull { key -> device.txt[key]?.let { key to it } }
-                )
-            )
-            scope.launch {
-                discoveredServers[device.host] = server
-                _servers.value = discoveredServers.values.toList()
-                _state.value = DiscoveryState.FOUND
-            }
-        }
-    }
-
     /**
      * With a [holder], drops that holder's claim and stops discovery only once no holder is
      * left. Without one, stops discovery unconditionally (used to restart it).
      */
     fun stopDiscovery(holder: String? = null) {
         if (holder != null && !holders.release(holder)) return
-        raopDiscovery?.stop()
-        raopDiscovery = null
 
         discoveryJob?.cancel()
         discoveryJob = null
@@ -262,7 +248,7 @@ class DiscoveryManager(
      *
      * Matching is by [identityOf] rather than by map key. Every discovery path derives
      * its own key — the plain name, "name@host" when two hosts claim one name,
-     * "name::platform" for AirPlay/AirPlay 2, or the bare host for RAOP — so a caller
+     * or "name::platform" for AirPlay/AirPlay 2 — so a caller
      * holding only a [Server] cannot reconstruct the key it was stored under. Removing
      * by display name, as this once did, silently did nothing for every AirPlay,
      * AirPlay 2 and name-disambiguated entry.

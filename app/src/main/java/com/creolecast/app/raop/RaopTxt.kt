@@ -4,6 +4,9 @@ package com.creolecast.app.raop
 private const val ET_NONE = 0
 private const val ET_RSA = 1
 
+/** TXT keys forwarded to the session, raw (`et` and `md` are lists, see [RaopTxt]). */
+val RAOP_SESSION_TXT_KEYS = listOf("et", "md")
+
 /**
  * The RAOP (`_raop._tcp`) TXT fields a sender acts on. `et` is a comma-separated list
  * ("0,1,3"), not a single value or a bitmask.

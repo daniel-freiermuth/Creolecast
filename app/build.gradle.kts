@@ -127,7 +127,6 @@ dependencies {
     implementation(libs.okhttp.logging.interceptor)
     implementation(libs.androidx.media)
     implementation(libs.bouncycastle.bcprov)
-    implementation(libs.jmdns)
 
     testImplementation(libs.junit)
     // Self-signed TLS certificate for the fake Google Cast receiver in CastClientTest.

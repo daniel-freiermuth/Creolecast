@@ -1,5 +1,8 @@
 package com.creolecast.app
 
+import com.creolecast.app.raop.RAOP_SESSION_TXT_KEYS
+import com.creolecast.app.raop.RaopTxt
+
 /**
  * Maps resolved mDNS/DNS-SD services to [Server] entries and decides how they are keyed
  * and merged in [DiscoveryManager]'s server map.
@@ -8,6 +11,9 @@ internal object MdnsServers {
     private const val DEFAULT_VERSION = "1.0"
     private const val DEFAULT_SAMPLE_RATE = 48000
     private const val DEFAULT_CHANNELS = 2
+
+    // RAOP receivers that omit sr still expect the AirPlay 1 rate.
+    private const val RAOP_DEFAULT_SAMPLE_RATE = 44100
 
     /**
      * Builds the [Server] a resolved service describes from its type, name and TXT record,
@@ -22,7 +28,16 @@ internal object MdnsServers {
     ): Server? {
         val txt = TxtRecord(attributes)
         val identity = identify(serviceType, serviceName, txt) ?: return null
-        val extraParts = identity.castFields + encodePresent(
+        val isRaop = serviceType.contains("_raop")
+        val sampleRate = txt.int("sr") ?: txt.int("samplerate")
+            ?: if (isRaop) RAOP_DEFAULT_SAMPLE_RATE else DEFAULT_SAMPLE_RATE
+        // The raw RAOP TXT fields RaopSession reads back (`et` and `md` are lists).
+        val raopFields = if (isRaop) {
+            encodePresent(RAOP_SESSION_TXT_KEYS.map { key -> key to txt[key] })
+        } else {
+            emptyList()
+        }
+        val extraParts = identity.castFields + raopFields + encodePresent(
             listOf(
                 "model" to identity.model,
                 "id" to identity.deviceId,
@@ -37,12 +52,17 @@ internal object MdnsServers {
             port = port,
             version = txt["version"] ?: txt["srcvers"] ?: DEFAULT_VERSION,
             codecs = txt["codecs"]?.split(",") ?: listOf("pcm"),
-            sampleRate = txt.int("sr") ?: txt.int("samplerate") ?: DEFAULT_SAMPLE_RATE,
+            sampleRate = sampleRate,
             channels = txt.int("ch") ?: txt.int("channels") ?: DEFAULT_CHANNELS,
             platform = identity.platform,
             extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
         )
     }
+
+    /** True for an _raop service this app cannot stream to: its `et` list is FairPlay/MFi only. */
+    fun isUnsupportedRaop(serviceType: String, attributes: Map<String, ByteArray?>): Boolean =
+        serviceType.contains("_raop") &&
+            !RaopTxt.isSupported(RaopTxt.intList(TxtRecord(attributes)["et"]))
 
     /** AirPlay and AirPlay 2 entries for one device coexist, so their key names the platform. */
     fun storageKey(baseKey: String, platform: CastPlatform?): String =
