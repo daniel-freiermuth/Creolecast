@@ -127,7 +127,6 @@ dependencies {
     implementation(libs.okhttp.logging.interceptor)
     implementation(libs.androidx.media)
     implementation(libs.bouncycastle.bcprov)
-    implementation(libs.jmdns)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
