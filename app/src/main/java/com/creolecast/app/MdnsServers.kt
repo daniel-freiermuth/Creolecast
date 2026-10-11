@@ -48,17 +48,6 @@ internal object MdnsServers {
     fun storageKey(baseKey: String, platform: CastPlatform?): String =
         platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
 
-    /** The key a service that has disappeared was stored under. */
-    fun lostServiceKey(serviceType: String, serviceName: String): String {
-        val isRaop = serviceType.contains("_raop")
-        val baseName = if (isRaop && serviceName.contains("@")) {
-            serviceName.substringAfter("@")
-        } else {
-            serviceName
-        }
-        return storageKey(baseName, platformOf(serviceType))
-    }
-
     /**
      * The entry to store for [candidate] when [existing] is already stored under its key.
      * Re-resolved AirPlay/AirPlay 2 entries merge their TXT fields: an _raop resolve
