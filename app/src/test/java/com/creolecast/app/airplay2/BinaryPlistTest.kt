@@ -75,6 +75,61 @@ class BinaryPlistTest {
         BinaryPlist.decode(ByteArray(10))
     }
 
+    // Hostile plists a receiver could send. Every caller catches only
+    // IllegalArgumentException, so anything else (an Error in particular)
+    // escapes and kills the thread that decoded it.
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects a self-referencing array`() {
+        // {"a": x} where x = [x]
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0xA1, 2))))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects a trailer object count beyond the data`() {
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), objectCount = 0x7FFFFFFF))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects a root index outside the object table`() {
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), rootIndex = 3))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects an offset table past the end of the data`() {
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), offsetTableOffset = 0x7FFFFFF0))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects an object offset past the end of the data`() {
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0x09)), objectOffsets = listOf(8, 11, 60000)))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `decode rejects a collection count past the end of the data`() {
+        // {"a": x} where x claims 200 refs (extended count) but the data ends first
+        BinaryPlist.decode(plist(listOf(dictAToObject2, stringA, bytes(0xAF, 0x10, 200))))
+    }
+
+    @Test(timeout = 10_000)
+    fun `decode handles arrays that share one child many times`() {
+        // {"a": x1} where each xi = [x(i+1)] * 255 and the last level is true:
+        // 1.6 KB of input that expands to 255^6 leaves if every ref is decoded afresh.
+        val depth = 6
+        val width = 255
+        val levels = (0 until depth).map { level ->
+            bytes(0xAF, 0x10, width) + ByteArray(width) { (3 + level).toByte() }
+        }
+        val decoded = BinaryPlist.decode(plist(listOf(dictAToObject2, stringA) + levels + bytes(0x09)))
+        var node: Any? = decoded["a"]
+        repeat(depth) {
+            val list = node as List<*>
+            assertEquals(width, list.size)
+            node = list.first()
+        }
+        assertEquals(true, node)
+    }
+
     // Golden vectors below come from Python's plistlib (FMT_BINARY), which
     // writes the same bplist00 layout as CoreFoundation, or are hand-built and
     // validated with plistlib.loads. They cover object kinds and trailer
@@ -216,6 +271,42 @@ class BinaryPlistTest {
         assertEquals("AA:BB:CC:DD:EE:FF", peer!!["ID"])
         assertEquals(listOf("192.168.1.5"), peer["Addresses"])
         assertEquals(1, (decoded["timingPeerList"] as? List<*>)?.size)
+    }
+
+    private fun bytes(vararg values: Int): ByteArray = ByteArray(values.size) { values[it].toByte() }
+
+    // {"a": object 2} and the "a" it refers to, for plist() below.
+    private val dictAToObject2 = bytes(0xD1, 1, 2)
+    private val stringA = bytes(0x51, 'a'.code)
+
+    /**
+     * Lays [objects] out as a bplist00 with 2-byte offsets and 1-byte refs.
+     * The trailer fields and offsets default to the honest values.
+     */
+    private fun plist(
+        objects: List<ByteArray>,
+        objectCount: Long = objects.size.toLong(),
+        rootIndex: Long = 0,
+        offsetTableOffset: Long? = null,
+        objectOffsets: List<Int>? = null
+    ): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write("bplist00".toByteArray())
+        val offsets = objects.map { obj -> out.size().also { out.write(obj) } }
+        val tableOffset = out.size().toLong()
+        for (off in objectOffsets ?: offsets) {
+            out.write(off shr 8)
+            out.write(off)
+        }
+        val trailer = java.nio.ByteBuffer.allocate(32)
+            .put(ByteArray(6))
+            .put(2.toByte())
+            .put(1.toByte())
+            .putLong(objectCount)
+            .putLong(rootIndex)
+            .putLong(offsetTableOffset ?: tableOffset)
+        out.write(trailer.array())
+        return out.toByteArray()
     }
 
     private fun hex(s: String): ByteArray = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
