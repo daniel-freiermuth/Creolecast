@@ -61,7 +61,8 @@ internal object MdnsServers {
         // name spoofing would redirect a user who trusts a familiar name into
         // casting to an attacker's box instead. Key it separately and disambiguate
         // the display name so both stay visible rather than one clobbering the other.
-        val existingSameName = stored[name]
+        // AirPlay entries are stored under "name::platform", so look them up that way.
+        val existingSameName = stored[storageKey(name, server.platform)]
         val spoofedName = existingSameName != null && existingSameName.host != hostAddress
         val baseKey = if (spoofedName) "$name@$hostAddress" else name
         val key = storageKey(baseKey, server.platform)
