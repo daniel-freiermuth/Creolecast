@@ -1,5 +1,6 @@
 package com.creolecast.app.airplay2
 
+import android.util.Log
 import kotlin.concurrent.thread
 
 /**
@@ -16,6 +17,7 @@ internal class AirPlay2Heartbeat(
     private val onLost: (reason: String) -> Unit
 ) {
     private companion object {
+        const val TAG = "AirPlay2Client"
         const val SYNC_INTERVAL_MS = 1000L
         const val FEEDBACK_INTERVAL_MS = 2000L
         const val FEEDBACK_FAILURE_LIMIT = 3
@@ -51,12 +53,13 @@ internal class AirPlay2Heartbeat(
     }
 
     /** POST /feedback; false if the receiver didn't accept it. */
-    @Suppress("TooGenericExceptionCaught") // Any failure of the request counts as a miss.
+    @Suppress("TooGenericExceptionCaught") // Daemon thread boundary: any failure is a logged miss.
     private fun sendFeedback(): Boolean = try {
         val resp = control.request("POST", "/feedback", null, null)
         if (clock.usePtp) clock.reanchorIfFollowing(resp.headers)
         resp.code in SUCCESS
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        if (isRunning()) Log.w(TAG, "POST /feedback keep-alive failed", e)
         false
     }
 
