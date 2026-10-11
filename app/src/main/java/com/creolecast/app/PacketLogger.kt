@@ -37,7 +37,9 @@ object PacketLogger {
     }
 
     fun log(direction: PacketDirection, type: PacketType, message: String, payloadSize: Int = 0) {
-        val timestamp = dateFormat.get()!!.format(Date())
+        // initialValue() is overridden, so get() never returns null.
+        val formatter = checkNotNull(dateFormat.get()) { "ThreadLocal formatter missing" }
+        val timestamp = formatter.format(Date())
         val entry = PacketLog(
             timestamp = timestamp,
             direction = direction,
