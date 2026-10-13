@@ -56,11 +56,16 @@ internal class AirPlay2EventChannel(
         }
     }
 
+    /**
+     * Reads until the receiver ends the stream or [close] closes the socket. Not gated on
+     * [isRunning]: [connect] runs during session setup, before the client starts running,
+     * so such a gate would end the loop before the first event arrives.
+     */
     private fun startReadLoop(s: Socket) {
         thread(name = "ap2-event", isDaemon = true) {
             try {
                 val stream = s.getInputStream()
-                while (isRunning()) {
+                while (true) {
                     val msg = readEventMessage(stream) ?: break
                     dispatch(msg)
                 }
