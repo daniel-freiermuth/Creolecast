@@ -149,22 +149,10 @@ class DiscoveryManager(
         if (server == null) {
             Log.e(TAG, "Ignoring $serviceName: unexpected service type ${serviceInfo.serviceType}")
         } else {
-            val name = server.name
             synchronized(discoveredServers) {
-                // A different device advertising the same friendly name must not silently
-                // take over an already-discovered entry's host - that's exactly how mDNS
-                // name spoofing would redirect a user who trusts a familiar name into
-                // casting to an attacker's box instead. Key it separately and disambiguate
-                // the display name so both stay visible rather than one clobbering the other.
-                val existingSameName = discoveredServers[name]
-                val spoofedName = existingSameName != null && existingSameName.host != hostAddress
-                val baseKey = if (spoofedName) "$name@$hostAddress" else name
-                val key = MdnsServers.storageKey(baseKey, server.platform)
-                val candidate =
-                    if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
-
                 val isRaop = serviceInfo.serviceType.contains("_raop")
-                putFound(key, MdnsServers.merged(discoveredServers[key], candidate, isRaop))
+                val (key, entry) = MdnsServers.place(discoveredServers, server, isRaop)
+                putFound(key, entry)
             }
         }
     }
@@ -374,7 +362,7 @@ class DiscoveryManager(
         private fun isIpv4Literal(host: String): Boolean = InetAddresses.isNumericAddress(host) &&
             InetAddresses.parseNumericAddress(host) is Inet4Address
 
-        private fun isLoopbackHost(hostAddress: String): Boolean =
+        internal fun isLoopbackHost(hostAddress: String): Boolean =
             hostAddress == "127.0.0.1" || hostAddress == "::1" || hostAddress.contains("localhost")
 
         /**

@@ -48,6 +48,26 @@ internal object MdnsServers {
     fun storageKey(baseKey: String, platform: CastPlatform?): String =
         platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
 
+    /**
+     * Where a freshly resolved [server] goes in [servers]: the key to store it under and the
+     * entry to store there (see [merged] for [isRaop]).
+     *
+     * A different device advertising an already-listed friendly name must not silently take
+     * over that entry's host - that's exactly how mDNS name spoofing would redirect a user who
+     * trusts a familiar name into casting to an attacker's box instead. Such an entry is keyed
+     * "name@host" and displayed as "name (host)", so both stay visible rather than one
+     * clobbering the other.
+     */
+    fun place(servers: Map<String, Server>, server: Server, isRaop: Boolean): Pair<String, Server> {
+        val name = server.name
+        val existingSameName = servers[name]
+        val spoofedName = existingSameName != null && existingSameName.host != server.host
+        val baseKey = if (spoofedName) "$name@${server.host}" else name
+        val key = storageKey(baseKey, server.platform)
+        val candidate = if (spoofedName) server.copy(name = "$name (${server.host})") else server
+        return key to merged(servers[key], candidate, isRaop)
+    }
+
     /** The key a service that has disappeared was stored under. */
     fun lostServiceKey(serviceType: String, serviceName: String): String {
         val isRaop = serviceType.contains("_raop")
