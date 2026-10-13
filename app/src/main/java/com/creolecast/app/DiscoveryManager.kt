@@ -42,6 +42,9 @@ class DiscoveryManager(
     private var multicastLock: WifiManager.MulticastLock? = null
 
     private val discoveredServers = mutableMapOf<String, Server>()
+
+    // Guarded by discoveredServers.
+    private val resolvedServiceKeys = ResolvedServiceKeys()
     private val resolveQueue = ConcurrentLinkedQueue<NsdServiceInfo>()
     private var activeResolves = 0
     private var discoveryJob: Job? = null
@@ -69,10 +72,12 @@ class DiscoveryManager(
 
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
             Log.d(TAG, "Service lost: ${serviceInfo.serviceName}")
-            val nameToRemove =
-                MdnsServers.lostServiceKey(serviceInfo.serviceType, serviceInfo.serviceName)
             synchronized(discoveredServers) {
-                discoveredServers.remove(nameToRemove)
+                val key = resolvedServiceKeys.forget(
+                    serviceInfo.serviceType,
+                    serviceInfo.serviceName
+                ) ?: return
+                discoveredServers.remove(key)
                 _servers.value = discoveredServers.values.toList()
                 if (discoveredServers.isEmpty()) {
                     _state.value = DiscoveryState.NONE
@@ -155,6 +160,7 @@ class DiscoveryManager(
                 val isRaop = serviceInfo.serviceType.contains("_raop")
                 val (key, entry) = MdnsServers.resolvedEntry(discoveredServers, server, isRaop)
                 putFound(key, entry)
+                resolvedServiceKeys.record(serviceInfo.serviceType, serviceName, key)
             }
         }
     }
@@ -198,6 +204,7 @@ class DiscoveryManager(
         stopDiscovery()
         synchronized(discoveredServers) {
             discoveredServers.clear()
+            resolvedServiceKeys.clear()
             _servers.value = emptyList()
         }
 
