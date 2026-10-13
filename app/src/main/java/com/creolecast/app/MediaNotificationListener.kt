@@ -303,15 +303,28 @@ private fun readArtwork(metadata: MediaMetadata?, contentResolver: ContentResolv
     }
 }
 
+/**
+ * URI schemes whose artwork is read in-process. `file://` is excluded: the URI comes from an
+ * arbitrary media app, and opening it here would read CreoleCast's own private files (e.g.
+ * the AirPlay 2 pairing secrets) and publish them through the artwork server.
+ */
+private val READABLE_ARTWORK_SCHEMES = setOf(
+    ContentResolver.SCHEME_CONTENT,
+    ContentResolver.SCHEME_ANDROID_RESOURCE
+)
+
+/** [read]'s result if [scheme] is a readable artwork scheme; [read] is not called otherwise. */
+internal fun readLocalArtwork(scheme: String?, read: () -> ByteArray?): ByteArray? =
+    if (scheme in READABLE_ARTWORK_SCHEMES) read() else null
+
 // The URI points into another app's ContentProvider, which can surface any RuntimeException
 // across Binder. Artwork is best-effort and must not crash the listener.
 @Suppress("TooGenericExceptionCaught")
 private fun readArtworkUri(uriStr: String, contentResolver: ContentResolver): ByteArray? = try {
+    // Web URLs reach the receiver as artworkUrl; only content:// and android.resource:// URIs
+    // are read.
     val uri = uriStr.toUri()
-    if (uri.scheme == "http" || uri.scheme == "https") {
-        // Web URLs reach the receiver as artworkUrl; only local (content://) URIs are read.
-        null
-    } else {
+    readLocalArtwork(uri.scheme) {
         contentResolver.openInputStream(uri)?.use { it.readBytes() }
     }
 } catch (e: Exception) {
