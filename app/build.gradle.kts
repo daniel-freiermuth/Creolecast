@@ -86,6 +86,11 @@ android {
         // accessors Kotlin generates for private access from lambdas and nested classes.
         disable += setOf("LogConditional", "SyntheticAccessor")
     }
+    // The AirPlay 2 protocol classes log through android.util.Log on every path; let JVM
+    // unit tests run them against the stub android.jar instead of throwing "not mocked".
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
     packaging {
         jniLibs { useLegacyPackaging = false }
     }
