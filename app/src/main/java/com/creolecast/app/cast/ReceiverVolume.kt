@@ -76,6 +76,11 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         mediaSession = null
     }
 
+    /** Back to full volume, where a new AirPlay handshake leaves the receiver. */
+    fun reset() {
+        steps = MAX_STEPS
+    }
+
     /** One step up (+1) or down (-1), from the notification's volume buttons. */
     fun adjust(direction: Int) {
         steps = (steps + direction).coerceIn(0, MAX_STEPS)
