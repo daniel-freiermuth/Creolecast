@@ -27,6 +27,9 @@ internal fun createCastHttpClient(): HttpClient = HttpClient(OkHttp) {
             connectTimeout(SOCKET_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             readTimeout(SOCKET_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             writeTimeout(SOCKET_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            // The OkHttp engine sends WebSocket pings only from its own setting; it ignores
+            // the WebSockets plugin's pingIntervalMillis.
+            pingInterval(WEBSOCKET_PING_INTERVAL_MS, TimeUnit.MILLISECONDS)
             val dispatcher = okhttp3.Dispatcher()
             dispatcher.maxRequests = MAX_CONCURRENT_REQUESTS
             dispatcher.maxRequestsPerHost = MAX_CONCURRENT_REQUESTS_PER_HOST
