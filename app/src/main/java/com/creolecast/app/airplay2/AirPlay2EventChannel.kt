@@ -60,7 +60,9 @@ internal class AirPlay2EventChannel(
         thread(name = "ap2-event", isDaemon = true) {
             try {
                 val stream = s.getInputStream()
-                while (isRunning()) {
+                // Not isRunning(): the client connects this port during setup and
+                // flags the session running only afterwards. close() ends the loop.
+                while (!s.isClosed) {
                     val msg = readEventMessage(stream) ?: break
                     dispatch(msg)
                 }
