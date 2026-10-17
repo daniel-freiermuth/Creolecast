@@ -18,8 +18,9 @@ import io.ktor.http.contentType
 internal class DlnaController(private val ctx: CastContext) {
     /** Stops whatever the renderer plays, then sets our stream as its URI and plays it. */
     suspend fun start(dest: CastDestination) {
-        val controlUrl = avTransportUrl(dest.extra) ?: return
-        val streamUrl = localStreamUrl() ?: return
+        val controlUrl = avTransportUrl(dest.extra)
+            ?: return ctx.failStart(dest, "device has no AVTransport control URL")
+        val streamUrl = localStreamUrl() ?: return ctx.failStart(dest, NO_LOCAL_ADDRESS)
         httpExchange {
             // A renderer that is not playing may reject Stop; that must not stop the cast.
             httpExchange { post(controlUrl, "Stop", DlnaSoap.PRE_PLAY_STOP_BODY) }

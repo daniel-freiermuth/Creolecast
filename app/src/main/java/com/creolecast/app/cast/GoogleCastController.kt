@@ -31,7 +31,7 @@ private const val MIRRORING_APP_ID = "0F5096C8"
  */
 internal class GoogleCastController(private val ctx: CastContext) {
     suspend fun start(dest: CastDestination) {
-        val myIp = localIpv4Address() ?: return
+        val myIp = localIpv4Address() ?: return ctx.failStart(dest, NO_LOCAL_ADDRESS)
         val encodedUrl = URLEncoder.encode("http://$myIp:$STREAM_PORT/stream.wav", Charsets.UTF_8)
         ctx.state.value = CastState.CONNECTING
         logInstalledApps(dest)
