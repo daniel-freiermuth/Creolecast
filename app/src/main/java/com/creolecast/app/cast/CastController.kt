@@ -128,6 +128,17 @@ internal class CastController(
         service.stopSelf()
     }
 
+    /**
+     * Ends a start request that has nothing to cast to. The service was started with
+     * startForegroundService(), so it must enter the foreground before it stops, or the
+     * system kills the app.
+     */
+    fun refuseStart() {
+        enterForeground()
+        service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        service.stopSelf()
+    }
+
     private fun rememberDestination(destination: CastDestination) {
         prefs.edit {
             putString(AudioCastService.KEY_LAST_SERVER_HOST, destination.host)

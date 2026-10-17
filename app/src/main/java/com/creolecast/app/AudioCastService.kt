@@ -110,8 +110,12 @@ class AudioCastService @JvmOverloads constructor(
                 val destination = parseDestination(intent)
                 if (mediaProjectionToken != null && destination != null) {
                     controller.start(mediaProjectionToken, destination)
+                    START_STICKY
+                } else {
+                    Log.w(TAG, "Cast start without a projection grant or a usable destination")
+                    controller.refuseStart()
+                    START_NOT_STICKY
                 }
-                START_STICKY
             }
 
             ACTION_STOP -> {
