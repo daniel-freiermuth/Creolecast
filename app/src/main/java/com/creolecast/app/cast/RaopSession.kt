@@ -295,7 +295,7 @@ internal fun raopSdp(
     "c=IN IP4 $receiverHost\r\n" +
     "t=0 0\r\n" +
     "m=audio 0 RTP/AVP 96\r\n" +
-    "a=rtpmap:96 L16/44100/2\r\n" +
+    "a=rtpmap:96 AppleLossless\r\n" +
     "a=fmtp:96 352 0 16 40 10 14 2 255 0 0 44100\r\n" +
     cryptoLines +
     "a=control:rtp\r\n"
