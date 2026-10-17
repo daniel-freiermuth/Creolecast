@@ -24,6 +24,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         private set
 
     private var mediaSession: MediaSession? = null
+    private var volumeProvider: VolumeProvider? = null
 
     /**
      * Starts a MediaSession with a remote VolumeProvider so the phone's hardware volume
@@ -46,7 +47,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
                 .build()
         )
         session.setCallback(object : MediaSession.Callback() {})
-        session.setPlaybackToRemote(object : VolumeProvider(
+        val provider = object : VolumeProvider(
             VOLUME_CONTROL_ABSOLUTE,
             MAX_STEPS,
             steps
@@ -65,20 +66,24 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
                 setDb((volume - MAX_STEPS).toDouble())
                 ctx.refreshStatus()
             }
-        })
+        }
+        session.setPlaybackToRemote(provider)
         session.isActive = true
         mediaSession = session
+        volumeProvider = provider
     }
 
     fun stopSession() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        volumeProvider = null
     }
 
     /** One step up (+1) or down (-1), from the notification's volume buttons. */
     fun adjust(direction: Int) {
         steps = (steps + direction).coerceIn(0, MAX_STEPS)
+        volumeProvider?.currentVolume = steps
         setDb((steps - MAX_STEPS).toDouble())
         ctx.refreshStatus()
     }
