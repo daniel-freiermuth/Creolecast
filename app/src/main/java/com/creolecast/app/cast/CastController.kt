@@ -49,8 +49,9 @@ internal class CastController(
     private val capture = AudioCapture(ctx)
     private val streamServer = WavStreamServer(ctx)
     private val artworkServer = ArtworkServer(ctx)
-    private val receivers = ReceiverProtocols(ctx, AirPlayIdentity(prefs), securePrefs, service)
-    val metadata = MetadataPublisher(ctx, receivers.dlna)
+    private val receivers =
+        ReceiverProtocols(ctx, AirPlayIdentity(prefs), securePrefs, service, volume)
+    val metadata = MetadataPublisher(ctx, receivers.dlna, receivers.googleCast)
 
     private var sessionJob: Job? = null
     private var mediaProjection: MediaProjection? = null
@@ -200,23 +201,26 @@ internal class CastController(
     }
 
     /**
-     * Closes the RAOP sockets and AirPlay 2 clients only after the TEARDOWN/stop requests
-     * [teardownJobs] are sending have had a bounded window to reach the receivers;
-     * closing them at once meant the requests almost always lost that race and receivers
-     * held the session until their own timeout. The references are taken now, so a fast
-     * reconnect that reuses the registries in the meantime isn't affected.
+     * Closes the RAOP sockets, AirPlay 2 and Google Cast clients only after the
+     * TEARDOWN/stop requests [teardownJobs] are sending have had a bounded window to reach
+     * the receivers; closing them at once meant the requests almost always lost that race
+     * and receivers held the session until their own timeout. The references are taken
+     * now, so a fast reconnect that reuses the registries in the meantime isn't affected.
      */
     private fun closeAfterTeardown(teardownJobs: List<Job>) {
         val raopSockets = ctx.raop.snapshotSockets()
         val airPlay2Clients = ctx.airPlay2.snapshot()
+        val googleCastClients = ctx.googleCast.snapshot()
         ctx.raop.clear()
         ctx.airPlay2.clear()
+        ctx.googleCast.clear()
         ctx.scope.launch(ctx.ioDispatcher) {
             withTimeoutOrNull(TEARDOWN_GRACE_MS) { teardownJobs.joinAll() }
             raopSockets.forEach { closeQuietly(it, "RAOP control socket") }
             airPlay2Clients.forEach { client ->
                 bestEffort("Closing AirPlay 2 client") { client.close() }
             }
+            googleCastClients.forEach { it.close() }
         }
     }
 }

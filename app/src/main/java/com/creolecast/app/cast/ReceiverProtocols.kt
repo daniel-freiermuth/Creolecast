@@ -16,10 +16,11 @@ internal class ReceiverProtocols(
     private val ctx: CastContext,
     private val identity: AirPlayIdentity,
     securePrefs: SharedPreferences,
-    context: Context
+    context: Context,
+    volume: ReceiverVolume
 ) {
     val dlna = DlnaController(ctx)
-    private val googleCast = GoogleCastController(ctx)
+    val googleCast = GoogleCastController(ctx, volume)
     private val airPlay2 = AirPlay2Session(ctx, identity, securePrefs, context)
 
     /** Launches the session(s) streaming to [dest] as children of the cast's [scope]. */
@@ -27,7 +28,7 @@ internal class ReceiverProtocols(
         when (dest.platform) {
             CastPlatform.DLNA -> scope.launch { dlna.start(dest) }
 
-            CastPlatform.GOOGLE_CAST -> scope.launch { googleCast.start(dest) }
+            CastPlatform.GOOGLE_CAST -> scope.launch { googleCast.cast(dest) }
 
             CastPlatform.AIRPLAY -> scope.launch { RaopSession.cast(ctx, dest, identity) }
 
@@ -55,7 +56,7 @@ internal class ReceiverProtocols(
 
             CastPlatform.DLNA -> dlna.stop(dest)
 
-            CastPlatform.GOOGLE_CAST -> googleCast.stop(dest)
+            CastPlatform.GOOGLE_CAST -> ctx.googleCast[dest.host]?.stop()
 
             CastPlatform.AIRPLAY -> if (dest.port == RAOP_PORT || dest.name.contains("@")) {
                 ctx.raop.teardown(dest)

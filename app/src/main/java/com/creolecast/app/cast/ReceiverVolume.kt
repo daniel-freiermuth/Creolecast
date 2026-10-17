@@ -6,7 +6,11 @@ import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.util.Log
+import com.creolecast.app.PacketDirection
+import com.creolecast.app.PacketLogger
+import com.creolecast.app.PacketType
 import io.ktor.websocket.Frame
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -24,6 +28,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         private set
 
     private var mediaSession: MediaSession? = null
+    private var volumeProvider: VolumeProvider? = null
 
     /**
      * Starts a MediaSession with a remote VolumeProvider so the phone's hardware volume
@@ -46,7 +51,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
                 .build()
         )
         session.setCallback(object : MediaSession.Callback() {})
-        session.setPlaybackToRemote(object : VolumeProvider(
+        val provider = object : VolumeProvider(
             VOLUME_CONTROL_ABSOLUTE,
             MAX_STEPS,
             steps
@@ -65,15 +70,18 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
                 setDb((volume - MAX_STEPS).toDouble())
                 ctx.refreshStatus()
             }
-        })
+        }
+        session.setPlaybackToRemote(provider)
         session.isActive = true
         mediaSession = session
+        volumeProvider = provider
     }
 
     fun stopSession() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        volumeProvider = null
     }
 
     /** One step up (+1) or down (-1), from the notification's volume buttons. */
@@ -89,8 +97,26 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         ctx.scope.launch {
             ctx.raop.sendVolume(dB)
             ctx.airPlay2.setVolume(dB)
+            ctx.googleCast.setVolume((dB + DB_RANGE) / DB_RANGE)
             sendAriaCastVolume(dB)
         }
+    }
+
+    /**
+     * A receiver changed its own volume to [level] (0.0 silent to 1.0 max), from its
+     * buttons or app: mirrors it on the phone's volume keys without echoing it back.
+     */
+    fun reflectReceiverLevel(level: Double) {
+        val reflected = (level.coerceIn(0.0, 1.0) * MAX_STEPS).roundToInt()
+        if (reflected == steps) return
+        steps = reflected
+        volumeProvider?.currentVolume = reflected
+        PacketLogger.log(
+            PacketDirection.IN,
+            PacketType.CONTROL,
+            "Receiver volume changed to $reflected/$MAX_STEPS"
+        )
+        ctx.refreshStatus()
     }
 
     private suspend fun sendAriaCastVolume(dB: Double) {

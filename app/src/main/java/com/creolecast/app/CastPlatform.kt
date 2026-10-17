@@ -22,8 +22,8 @@ enum class CastPlatform(val label: String) {
     /** Hardware volume keys are routed to the receiver through a MediaSession. */
     val supportsVolumeSession: Boolean
         get() = when (this) {
-            AIRPLAY, AIRPLAY2, ARIACAST, DLNA -> true
-            GOOGLE_CAST, SNAPCAST, MANUAL -> false
+            AIRPLAY, AIRPLAY2, ARIACAST, DLNA, GOOGLE_CAST -> true
+            SNAPCAST, MANUAL -> false
         }
 
     /** The receiver pulls the stream (and artwork) from a local HTTP server. */
