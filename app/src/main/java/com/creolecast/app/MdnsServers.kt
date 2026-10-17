@@ -48,17 +48,6 @@ internal object MdnsServers {
     fun storageKey(baseKey: String, platform: CastPlatform?): String =
         platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
 
-    /** The key a service that has disappeared was stored under. */
-    fun lostServiceKey(serviceType: String, serviceName: String): String {
-        val isRaop = serviceType.contains("_raop")
-        val baseName = if (isRaop && serviceName.contains("@")) {
-            serviceName.substringAfter("@")
-        } else {
-            serviceName
-        }
-        return storageKey(baseName, platformOf(serviceType))
-    }
-
     /**
      * The entry to store for [candidate] when [existing] is already stored under its key.
      * Re-resolved AirPlay/AirPlay 2 entries merge their TXT fields: an _raop resolve
@@ -152,4 +141,29 @@ internal object MdnsServers {
 
         fun int(key: String): Int? = get(key)?.toIntOrNull()
     }
+}
+
+/**
+ * The [DiscoveryManager] key each resolved mDNS instance was stored under. A lost service
+ * carries neither its TXT record nor its host, so the key - the Google Cast "fn" name,
+ * "name@host" for a disambiguated entry, the AirPlay platform suffix - cannot be derived
+ * again from the instance name alone.
+ */
+internal class ResolvedServiceKeys {
+    private val keys = mutableMapOf<String, String>()
+
+    fun record(serviceType: String, serviceName: String, key: String) {
+        keys[instanceId(serviceType, serviceName)] = key
+    }
+
+    /** The key [serviceName] was stored under, or null if it was never resolved. */
+    fun forget(serviceType: String, serviceName: String): String? =
+        keys.remove(instanceId(serviceType, serviceName))
+
+    fun clear() = keys.clear()
+
+    // Found/lost and resolved NsdServiceInfo do not agree on the type's surrounding dots
+    // ("_googlecast._tcp." vs "._googlecast._tcp").
+    private fun instanceId(serviceType: String, serviceName: String) =
+        "${serviceType.trim('.')}/$serviceName"
 }
