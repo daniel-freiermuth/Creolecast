@@ -54,10 +54,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverListAdapter: ServerAdapter
     private lateinit var sharedPreferences: SharedPreferences
 
-    companion object {
-        private const val DISCOVERY_HOLDER = "MainActivity"
-    }
-
     private val _audioCastServiceFlow = MutableStateFlow<AudioCastService?>(null)
     val audioCastServiceFlow = _audioCastServiceFlow.asStateFlow()
 
@@ -360,6 +356,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val DISCOVERY_HOLDER = "MainActivity"
     }
 }
 
