@@ -1,5 +1,6 @@
 package com.creolecast.app.airplay2
 
+import android.util.Log
 import kotlin.concurrent.thread
 
 /**
@@ -14,6 +15,7 @@ internal class AirPlay2Heartbeat(
     private val isRunning: () -> Boolean
 ) {
     private companion object {
+        const val TAG = "AirPlay2Client"
         const val SYNC_INTERVAL_MS = 1000L
         const val FEEDBACK_INTERVAL_MS = 2000L
     }
@@ -21,6 +23,11 @@ internal class AirPlay2Heartbeat(
     private var syncThread: Thread? = null
     private var keepAliveThread: Thread? = null
 
+    /**
+     * A failed keep-alive (socket, crypto or receiver error) is logged and retried on
+     * the next tick; it must not escape and kill the process from this daemon thread.
+     */
+    @Suppress("TooGenericExceptionCaught") // Keep-alive thread boundary, see KDoc.
     fun start() {
         syncThread = thread(name = "ap2-sync", isDaemon = true) {
             while (isRunning()) {
@@ -37,8 +44,8 @@ internal class AirPlay2Heartbeat(
                 try {
                     val resp = control.request("POST", "/feedback", null, null)
                     if (clock.usePtp) clock.reanchorIfFollowing(resp.headers)
-                } catch (_: Exception) {
-                    // A missed keep-alive is retried on the next tick.
+                } catch (e: Exception) {
+                    if (isRunning()) Log.w(TAG, "POST /feedback keep-alive failed", e)
                 }
                 try {
                     Thread.sleep(FEEDBACK_INTERVAL_MS)

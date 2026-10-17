@@ -114,7 +114,10 @@ internal class AirPlay2AudioStream(
      * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
      * 28 bytes / 0xd7 plus the timeline id for PTP (audio.go sendSyncPacketAt).
      * The frame at `rtpTimestamp - latency` is anchored to the network time.
+     * A failed send is logged, not propagated: the next sync packet follows a
+     * second later, and this runs on the sync daemon thread.
      */
+    @Suppress("TooGenericExceptionCaught") // Sync thread boundary, see KDoc.
     fun sendSync(clock: AirPlay2Clock) {
         val networkTime = if (controlPort > 0) clock.networkTime() else null
         if (networkTime != null) {
@@ -128,8 +131,8 @@ internal class AirPlay2AudioStream(
                         controlPort
                     )
                 )
-            } catch (_: Exception) {
-                // Best effort: the next sync packet follows a second later.
+            } catch (e: Exception) {
+                Log.d(TAG, "Sync packet to ${config.host}:$controlPort failed", e)
             }
         }
     }
