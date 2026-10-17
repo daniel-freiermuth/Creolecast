@@ -16,6 +16,8 @@ import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -162,6 +164,16 @@ internal class AirPlay2Session(
     }
 
     private suspend fun stream(dest: CastDestination, client: AirPlay2Client) {
+        // client.connect() blocks and can't observe cancellation, so Stop or a new cast may
+        // have cancelled this session while it was connecting. stop() has already set OFF
+        // and cleared the registry; marking CASTING or registering now would undo that.
+        if (!currentCoroutineContext().isActive) {
+            withContext(NonCancellable) {
+                client.teardown()
+                client.close()
+            }
+            return
+        }
         ctx.markCasting()
         ctx.airPlay2.register(dest.host, client)
         ctx.metadata.value?.let {
