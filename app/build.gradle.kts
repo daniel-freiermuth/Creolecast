@@ -130,6 +130,8 @@ dependencies {
     implementation(libs.jmdns)
 
     testImplementation(libs.junit)
+    // Self-signed TLS certificate for the fake Google Cast receiver in CastClientTest.
+    testImplementation(libs.bouncycastle.bcpkix)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

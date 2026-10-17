@@ -27,9 +27,14 @@ private const val METADATA_TIMEOUT_MS = 5000L
 /**
  * Pushes the current track's metadata to the cast's receivers, in each protocol's way:
  * DMAP over RAOP, a plist via [com.creolecast.app.airplay2.AirPlay2Client], DIDL-Lite in
- * a DLNA SetAVTransportURI and JSON to AriaCast/Snapcast's `/metadata` endpoint.
+ * a DLNA SetAVTransportURI, a CastV2 QUEUE_UPDATE and JSON to AriaCast/Snapcast's
+ * `/metadata` endpoint.
  */
-internal class MetadataPublisher(private val ctx: CastContext, private val dlna: DlnaController) {
+internal class MetadataPublisher(
+    private val ctx: CastContext,
+    private val dlna: DlnaController,
+    private val googleCast: GoogleCastController
+) {
     private val updates = Channel<TrackMetadata>(Channel.CONFLATED)
 
     // DLNA only gets a new SetAVTransportURI when title/artist change, per renderer host.
@@ -96,8 +101,7 @@ internal class MetadataPublisher(private val ctx: CastContext, private val dlna:
                 lastSentToDlna[dest.host] = key
             }
 
-            // DIAL offers no metadata channel.
-            CastPlatform.GOOGLE_CAST -> Unit
+            CastPlatform.GOOGLE_CAST -> googleCast.updateMetadata(dest, metadata)
 
             CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL ->
                 publishToHttpEndpoint(dest, metadata)

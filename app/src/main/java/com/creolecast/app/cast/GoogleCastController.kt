@@ -3,90 +3,167 @@ package com.creolecast.app.cast
 import android.util.Log
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
-import io.ktor.client.plugins.timeout
-import io.ktor.client.request.delete
-import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
-import java.net.URLEncoder
+import com.creolecast.app.MediaCommand
+import com.creolecast.app.PacketDirection
+import com.creolecast.app.PacketLogger
+import com.creolecast.app.PacketType
+import com.creolecast.app.TrackMetadata
+import com.creolecast.app.googlecast.CAST_PORT
+import com.creolecast.app.googlecast.CastClient
+import com.creolecast.app.googlecast.CastDisconnect
+import com.creolecast.app.googlecast.CastListener
+import com.creolecast.app.googlecast.CastMetadata
+import java.io.IOException
+import java.util.Collections
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-/** DIAL REST service port of Google Cast devices. */
-private const val DIAL_PORT = 8008
-private const val LAUNCH_TIMEOUT_MS = 5000L
-
-/** DIAL app ids/names tried in order to play our stream URL. */
-private val DIAL_APP_IDS = listOf("DefaultMediaPlayer", "YouTube", "ChromeCast", "CC1AD845")
-
-/** Own-tone style mirroring receiver, the last resort when no standard app launches. */
-private const val MIRRORING_APP_ID = "0F5096C8"
+/** Consecutive failed connection attempts before the cast is given up. */
+private const val MAX_CONNECT_FAILURES = 3
+private const val RECONNECT_BACKOFF_MS = 1000L
 
 /**
- * Google Cast over DIAL: launches a receiver app with our WAV stream ([WavStreamServer])
- * as its media URL. DIAL has no volume or metadata channel; that would need the full
- * CastV2 protocol on port 8009.
+ * Google Cast over CastV2: launches the Default Media Receiver and has it play our live
+ * WAV stream ([WavStreamServer]), with now-playing metadata. Volume and play/pause changes
+ * made on the device (Home app, speaker buttons) are mirrored back to the phone; a lost
+ * connection is re-established.
  */
-internal class GoogleCastController(private val ctx: CastContext) {
-    suspend fun start(dest: CastDestination) {
-        val myIp = localIpv4Address() ?: return
-        val encodedUrl = URLEncoder.encode("http://$myIp:$STREAM_PORT/stream.wav", Charsets.UTF_8)
-        ctx.state.value = CastState.CONNECTING
-        logInstalledApps(dest)
-        val launched = DIAL_APP_IDS.any { appId -> launchApp(dest, appId, encodedUrl) } ||
-            launchMirroringApp(dest, encodedUrl)
-        if (launched) {
-            ctx.markCasting()
-        } else {
-            Log.e(LOG_TAG, "Google Cast launch failed for all attempted apps on ${dest.name}")
+internal class GoogleCastController(
+    private val ctx: CastContext,
+    private val volume: ReceiverVolume
+) {
+    // Last metadata sent per host, so the periodic refresh doesn't re-send it (Cast
+    // devices re-fetch the artwork on every QUEUE_UPDATE).
+    private val lastSentMetadata = Collections.synchronizedMap(mutableMapOf<String, CastMetadata>())
+
+    /** Streams to [dest] until the cast is cancelled or the device is taken over. */
+    suspend fun cast(dest: CastDestination) = withContext(ctx.ioDispatcher) {
+        val myIp = localIpv4Address()
+        if (myIp == null) {
             ctx.state.value = CastState.ERROR
+            return@withContext
+        }
+        val streamUrl = "http://$myIp:$STREAM_PORT/stream.wav"
+        var failures = 0
+        while (isActive) {
+            val ended = CompletableDeferred<CastDisconnect>()
+            val client = newClient(dest, ended)
+            ctx.state.value = CastState.CONNECTING
+            try {
+                client.connect()
+                client.launch()
+                client.load(streamUrl, "audio/wav", castMetadata(ctx.metadata.value))
+            } catch (e: IOException) {
+                client.close()
+                Log.e(LOG_TAG, "Google Cast session failed for ${dest.name}: ${e.reason}")
+                PacketLogger.log(
+                    PacketDirection.IN,
+                    PacketType.HANDSHAKE,
+                    "Google Cast ${dest.name} failed: ${e.reason}"
+                )
+                if (++failures >= MAX_CONNECT_FAILURES) {
+                    ctx.state.value = CastState.ERROR
+                    return@withContext
+                }
+                delay(RECONNECT_BACKOFF_MS shl failures)
+                continue
+            }
+            failures = 0
+            PacketLogger.log(
+                PacketDirection.OUT,
+                PacketType.HANDSHAKE,
+                "Google Cast: ${dest.name} playing $streamUrl"
+            )
+            if (stream(dest, client, ended) == CastDisconnect.AppReplaced) {
+                ctx.state.value = CastState.ERROR
+                return@withContext
+            }
+            delay(RECONNECT_BACKOFF_MS)
         }
     }
 
-    suspend fun stop(dest: CastDestination) {
-        ctx.client.delete("http://${dest.host}:$DIAL_PORT/apps/DefaultMediaPlayer")
+    /** Sends [metadata] to [dest]'s device unless it already shows it. */
+    fun updateMetadata(dest: CastDestination, metadata: TrackMetadata) {
+        val client = ctx.googleCast[dest.host] ?: return
+        val cast = castMetadata(metadata)
+        if (lastSentMetadata[dest.host] == cast) return
+        client.updateMetadata(cast)
+        lastSentMetadata[dest.host] = cast
+        PacketLogger.log(
+            PacketDirection.OUT,
+            PacketType.METADATA,
+            "Metadata sent to ${dest.name} (Google Cast)"
+        )
     }
 
-    /** Logs the device's DIAL apps, which helps debugging launch 404s. */
-    private suspend fun logInstalledApps(dest: CastDestination) {
-        httpExchange { ctx.client.get("http://${dest.host}:$DIAL_PORT/apps").bodyAsText() }
-            .onSuccess { Log.d(LOG_TAG, "Apps list on ${dest.name}: $it") }
-            .onFailure { Log.d(LOG_TAG, "Could not fetch apps list: ${it.reason}") }
-    }
+    private fun newClient(dest: CastDestination, ended: CompletableDeferred<CastDisconnect>) =
+        CastClient(
+            dest.host,
+            if (dest.port > 0) dest.port else CAST_PORT,
+            object : CastListener {
+                override fun onVolume(level: Double, muted: Boolean) =
+                    volume.reflectReceiverLevel(if (muted) 0.0 else level)
 
-    /** Receivers differ in the form field they read the media URL from: `url` or `v`. */
-    private suspend fun launchApp(dest: CastDestination, appId: String, encodedUrl: String) =
-        httpExchange {
-            listOf("url=$encodedUrl", "v=$encodedUrl").any { payload ->
-                val response = ctx.client.post("http://${dest.host}:$DIAL_PORT/apps/$appId") {
-                    setBody(payload)
-                    contentType(ContentType.Application.FormUrlEncoded)
-                    timeout { requestTimeoutMillis = LAUNCH_TIMEOUT_MS }
+                override fun onRemoteCommand(command: MediaCommand) {
+                    PacketLogger.log(
+                        PacketDirection.IN,
+                        PacketType.CONTROL,
+                        "Remote command from ${dest.name}: $command"
+                    )
+                    ctx.scope.launch { ctx.controlCommands.emit(command) }
                 }
-                response.status.isSuccess().also { launched ->
-                    if (launched) {
-                        Log.d(
-                            LOG_TAG,
-                            "Successfully launched Google Cast app: $appId with payload: $payload"
-                        )
-                    }
+
+                override fun onDisconnected(reason: CastDisconnect) {
+                    ended.complete(reason)
                 }
             }
-        }.getOrElse {
-            Log.d(LOG_TAG, "Failed to launch $appId: ${it.reason}")
-            false
-        }
+        )
 
-    private suspend fun launchMirroringApp(dest: CastDestination, encodedUrl: String) =
-        httpExchange {
-            ctx.client.post("http://${dest.host}:$DIAL_PORT/apps/$MIRRORING_APP_ID") {
-                setBody("url=$encodedUrl")
-                contentType(ContentType.Application.FormUrlEncoded)
-            }.status.isSuccess()
-        }.getOrElse {
-            Log.d(LOG_TAG, "Mirroring app launch failed: ${it.reason}")
-            false
+    /** Keeps [client] registered while it plays; returns why the session ended. */
+    private suspend fun stream(
+        dest: CastDestination,
+        client: CastClient,
+        ended: CompletableDeferred<CastDisconnect>
+    ): CastDisconnect {
+        ctx.googleCast.register(dest.host, client)
+        lastSentMetadata.remove(dest.host)
+        ctx.markCasting()
+        try {
+            val reason = ended.await()
+            Log.w(LOG_TAG, "Google Cast ${dest.name} ended: $reason")
+            PacketLogger.log(
+                PacketDirection.IN,
+                PacketType.HANDSHAKE,
+                "Google Cast ${dest.name} ended: $reason"
+            )
+            return reason
+        } finally {
+            ctx.googleCast.unregister(dest.host, client)
+            // Runs on cancellation too (the user hit Stop): NonCancellable lets the STOP
+            // reach the device instead of the connection just being dropped.
+            withContext(NonCancellable) {
+                bestEffort("Stopping Google Cast ${dest.name}") { client.stop() }
+                client.close()
+            }
         }
+    }
+
+    /**
+     * Our own artwork (served by [ArtworkServer]) wins over the source app's URL; its URL
+     * carries a content hash because Cast devices cache images by URL.
+     */
+    private fun castMetadata(metadata: TrackMetadata?): CastMetadata {
+        val artwork = ctx.artworkBytes
+        val myIp = if (artwork != null) localIpv4Address() else null
+        val imageUrl = if (artwork != null && myIp != null) {
+            "http://$myIp:$ARTWORK_PORT/artwork.jpg?v=${artwork.contentHashCode().toUInt()}"
+        } else {
+            metadata?.artworkUrl?.takeIf { it.startsWith("http") }
+        }
+        return CastMetadata(metadata?.title, metadata?.artist, metadata?.album, imageUrl)
+    }
 }

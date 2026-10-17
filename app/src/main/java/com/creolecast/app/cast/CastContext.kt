@@ -53,6 +53,7 @@ internal class CastContext(
 
     val raop = RaopRegistry()
     val airPlay2 = AirPlay2Registry()
+    val googleCast = GoogleCastRegistry()
 
     // Mutated from independent Dispatchers.IO coroutines (the session, the metadata
     // refresh timer and volume commands run concurrently), so a plain HashMap here

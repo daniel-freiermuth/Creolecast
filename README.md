@@ -19,6 +19,8 @@
     transient or PIN pairing with a persistent device identity, FairPlay SAP, an encrypted
     control channel, PTP/NTP timing and live metadata, artwork and volume sync.</li>
   <li><b>DLNA / UPnP:</b> Universal compatibility with Smart TVs, AV Receivers, and media boxes.</li>
+  <li><b>Google Cast:</b> Chromecast, Nest speakers/displays and Cast groups over CastV2, with
+    now-playing metadata and artwork and two-way volume and play/pause sync.</li>
 </ul>
 
 <hr />
