@@ -8,7 +8,6 @@ espressoCore = "3.6.1"
 appcompat = "1.7.0"
 material = "1.12.0"
 bouncycastle = "1.85"
-jmdns = "3.6.3"
 ktlint = "1.8.0"
 spotless = "8.10.4"
 detekt = "2.0.0-alpha.6"
@@ -28,7 +27,6 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
-jmdns = { group = "org.jmdns", name = "jmdns", version.ref = "jmdns" }
 androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activityKtx" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragmentKtx" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }

@@ -9,6 +9,9 @@ internal object MdnsServers {
     private const val DEFAULT_SAMPLE_RATE = 48000
     private const val DEFAULT_CHANNELS = 2
 
+    // RAOP receivers that omit sr still expect the AirPlay 1 rate.
+    private const val RAOP_DEFAULT_SAMPLE_RATE = 44100
+
     /**
      * Builds the [Server] a resolved service describes from its type, name and TXT record,
      * or returns null for a service type that is not one of the subscribed receiver types.
@@ -22,7 +25,20 @@ internal object MdnsServers {
     ): Server? {
         val txt = TxtRecord(attributes)
         val identity = identify(serviceType, serviceName, txt) ?: return null
-        val extraParts = identity.castFields + encodePresent(
+        val isRaop = serviceType.contains("_raop")
+        val sampleRate = txt.int("sr") ?: txt.int("samplerate")
+            ?: if (isRaop) RAOP_DEFAULT_SAMPLE_RATE else DEFAULT_SAMPLE_RATE
+        // RAOP TXT values, stored as the JmDNS path did; RaopSession reads et back.
+        val raopFields = if (isRaop) {
+            listOf(
+                "et" to encryptionTypes(txt),
+                "sr" to sampleRate,
+                "cn" to (txt.int("cn") ?: 0)
+            ).map { (key, value) -> ExtraFields.encode(key, value.toString()) }
+        } else {
+            emptyList()
+        }
+        val extraParts = identity.castFields + raopFields + encodePresent(
             listOf(
                 "model" to identity.model,
                 "id" to identity.deviceId,
@@ -37,27 +53,30 @@ internal object MdnsServers {
             port = port,
             version = txt["version"] ?: txt["srcvers"] ?: DEFAULT_VERSION,
             codecs = txt["codecs"]?.split(",") ?: listOf("pcm"),
-            sampleRate = txt.int("sr") ?: txt.int("samplerate") ?: DEFAULT_SAMPLE_RATE,
+            sampleRate = sampleRate,
             channels = txt.int("ch") ?: txt.int("channels") ?: DEFAULT_CHANNELS,
             platform = identity.platform,
             extra = if (extraParts.isEmpty()) null else extraParts.joinToString(";")
         )
     }
 
+    /**
+     * True for an _raop service this app cannot stream to. The RAOP sender implements only
+     * RSA (et bit 0) or no encryption; et is a bit set, so any other non-zero value rules
+     * both out. A comma list such as "0,3,5" does not parse and counts as "none", which
+     * the session code then streams unencrypted.
+     */
+    fun isUnsupportedRaop(serviceType: String, attributes: Map<String, ByteArray?>): Boolean {
+        if (!serviceType.contains("_raop")) return false
+        val encryptionTypes = encryptionTypes(TxtRecord(attributes))
+        return encryptionTypes != 0 && (encryptionTypes and 1) == 0
+    }
+
+    private fun encryptionTypes(txt: TxtRecord): Int = txt.int("et") ?: 0
+
     /** AirPlay and AirPlay 2 entries for one device coexist, so their key names the platform. */
     fun storageKey(baseKey: String, platform: CastPlatform?): String =
         platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
-
-    /** The key a service that has disappeared was stored under. */
-    fun lostServiceKey(serviceType: String, serviceName: String): String {
-        val isRaop = serviceType.contains("_raop")
-        val baseName = if (isRaop && serviceName.contains("@")) {
-            serviceName.substringAfter("@")
-        } else {
-            serviceName
-        }
-        return storageKey(baseName, platformOf(serviceType))
-    }
 
     /**
      * The entry to store for [candidate] when [existing] is already stored under its key.
