@@ -24,13 +24,17 @@ internal object BinaryPlistWriter {
     private const val MARKER_TRUE = 0x09
     private const val MARKER_INT = 0x10
     private const val MARKER_DATA = 0x40
-    private const val MARKER_STRING = 0x50
+    private const val MARKER_ASCII_STRING = 0x50
+    private const val MARKER_UTF16_STRING = 0x60
     private const val MARKER_ARRAY = 0xA0
     private const val MARKER_DICT = 0xD0
 
     private const val UINT8_MAX = 0xFFL
     private const val UINT16_MAX = 0xFFFFL
     private const val UINT32_MAX = 0xFFFFFFFFL
+
+    // Strings with any char at or above this need the UTF-16BE string type.
+    private const val ASCII_LIMIT = 0x80
 
     // log2 of the integer width in bytes, stored in the int marker's low nibble.
     private const val UINT8_EXPONENT = 0
@@ -67,7 +71,7 @@ internal object BinaryPlistWriter {
         val trailer = ByteBuffer.allocate(TRAILER_SIZE).order(ByteOrder.BIG_ENDIAN).apply {
             put(ByteArray(TRAILER_UNUSED_BYTES))
             put(offsetSize.toByte()) // 1 byte: offset table entry size
-            put(1.toByte()) // 1 byte: object reference size
+            put(objectRefSize(objects.size).toByte()) // 1 byte: object reference size
             putLong(objects.size.toLong()) // 8 bytes: number of objects
             putLong(0L) // 8 bytes: root object index
             putLong(offsetTableStart.toLong()) // 8 bytes: offset table offset
@@ -145,9 +149,13 @@ internal object BinaryPlistWriter {
             }
 
             is PlistNode.PString -> {
-                val raw = obj.value.toByteArray(Charsets.UTF_8)
-                writeMarker(MARKER_STRING, raw.size, out)
-                out.write(raw)
+                // ASCII strings use the 0x5 marker; anything else must be 0x6
+                // UTF-16BE, whose count is in 16-bit code units (String.length).
+                val ascii = obj.value.all { it.code < ASCII_LIMIT }
+                val marker = if (ascii) MARKER_ASCII_STRING else MARKER_UTF16_STRING
+                writeMarker(marker, obj.value.length, out)
+                val charset = if (ascii) Charsets.US_ASCII else Charsets.UTF_16BE
+                out.write(obj.value.toByteArray(charset))
             }
 
             is PlistNode.PUint -> writeUint(obj.value, out)
@@ -194,8 +202,10 @@ internal object BinaryPlistWriter {
         }
     }
 
+    private fun objectRefSize(numObjects: Int): Int = if (numObjects <= ONE_BYTE_LIMIT) 1 else 2
+
     private fun writeIntRef(index: Int, numObjects: Int, out: ByteArrayOutputStream) {
-        if (numObjects <= ONE_BYTE_LIMIT) {
+        if (objectRefSize(numObjects) == 1) {
             out.write(index)
         } else {
             writeBigEndian(index.toLong(), 2, out)
