@@ -111,7 +111,7 @@ internal class RaopSession(
     private fun handshake(): Pair<ServerPorts, RaopEncryption?> {
         val control = openControlChannel()
         val encryption = negotiateEncryption()
-        val sdp = sdp(encryption?.sdpLines.orEmpty())
+        val sdp = raopSdp(rtpSessionId, myIp, dest.host, encryption?.sdpLines.orEmpty())
 
         request(
             control,
@@ -225,17 +225,6 @@ internal class RaopSession(
         }
     }
 
-    private fun sdp(cryptoLines: String): String = "v=0\r\n" +
-        "o=iTunes $rtpSessionId 0 IN IP4 $myIp\r\n" +
-        "s=iTunes\r\n" +
-        "c=IN IP4 ${dest.host}\r\n" +
-        "t=0 0\r\n" +
-        "m=audio 0 RTP/AVP 96\r\n" +
-        "a=rtpmap:96 L16/44100/2\r\n" +
-        "a=fmtp:96 352 0 16 40 10 14 2 255 0 0 44100\r\n" +
-        cryptoLines +
-        "a=control:rtp\r\n"
-
     /** Sends [method] plus the common headers on the next CSeq and reads the response. */
     private fun request(
         control: RtspControl,
@@ -290,3 +279,23 @@ internal class RaopSession(
         }
     }
 }
+
+/**
+ * The ANNOUNCE body for session [sessionId] from [senderIp] to [receiverHost], describing
+ * the 352-frame 44100/16/2 packets [RaopAudioSender] sends, plus the optional [cryptoLines].
+ */
+internal fun raopSdp(
+    sessionId: Int,
+    senderIp: String,
+    receiverHost: String,
+    cryptoLines: String
+): String = "v=0\r\n" +
+    "o=iTunes $sessionId 0 IN IP4 $senderIp\r\n" +
+    "s=iTunes\r\n" +
+    "c=IN IP4 $receiverHost\r\n" +
+    "t=0 0\r\n" +
+    "m=audio 0 RTP/AVP 96\r\n" +
+    "a=rtpmap:96 AppleLossless\r\n" +
+    "a=fmtp:96 352 0 16 40 10 14 2 255 0 0 44100\r\n" +
+    cryptoLines +
+    "a=control:rtp\r\n"
