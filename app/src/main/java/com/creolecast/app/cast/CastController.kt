@@ -14,6 +14,7 @@ import android.util.Log
 import androidx.core.content.edit
 import com.creolecast.app.AudioCastService
 import com.creolecast.app.CastDestination
+import com.creolecast.app.CastPlatform
 import com.creolecast.app.CastState
 import com.creolecast.app.CastingStats
 import com.creolecast.app.PacketDirection
@@ -28,6 +29,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** How long TEARDOWN/stop requests get to reach the receivers before their sockets close. */
 private const val TEARDOWN_GRACE_MS = 2000L
+
+/** Receivers that remote-control their sender over DACP. */
+private val DACP_PLATFORMS = setOf(CastPlatform.AIRPLAY, CastPlatform.AIRPLAY2)
 
 /**
  * Runs one cast at a time for [AudioCastService]: foreground state, wake lock, phone
@@ -49,8 +53,9 @@ internal class CastController(
     private val capture = AudioCapture(ctx)
     private val streamServer = WavStreamServer(ctx)
     private val artworkServer = ArtworkServer(ctx)
-    private val receivers =
-        ReceiverProtocols(ctx, AirPlayIdentity(prefs), securePrefs, service, volume)
+    private val identity = AirPlayIdentity(prefs)
+    private val receivers = ReceiverProtocols(ctx, identity, securePrefs, service, volume)
+    private val dacp = DacpAdvertiser(service, ctx, identity, volume)
     val metadata = MetadataPublisher(ctx, receivers.dlna, receivers.googleCast)
 
     private var sessionJob: Job? = null
@@ -84,6 +89,7 @@ internal class CastController(
         if (!enterForeground()) return
         wakeLock.acquire()
         if (destination.platform.supportsVolumeSession) volume.startSession()
+        if (destination.platform in DACP_PLATFORMS) dacp.start()
 
         // The MediaProjection token is single-use on Android 14+; obtain it once, before
         // any retries.
@@ -99,6 +105,7 @@ internal class CastController(
         val teardownJobs = receivers.stopAll(ctx.destinations.value.toList())
         wakeLock.release()
         volume.stopSession()
+        dacp.stop()
 
         // Restore the volume only if the user didn't change it during casting.
         if (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
@@ -161,6 +168,7 @@ internal class CastController(
                 "MediaProjection permission was not granted"
             )
             volume.stopSession()
+            dacp.stop()
             wakeLock.release()
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
             sessionJob?.cancel()
