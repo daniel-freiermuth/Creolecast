@@ -12,6 +12,7 @@ import com.creolecast.app.cast.CastContext
 import com.creolecast.app.cast.CastController
 import com.creolecast.app.cast.CastNotification
 import com.creolecast.app.cast.ReceiverVolume
+import com.creolecast.app.cast.SecretRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +64,7 @@ class AudioCastService @JvmOverloads constructor(
     val state: StateFlow<CastState> = cast.state.asStateFlow()
     val stats: StateFlow<CastingStats> = cast.stats.asStateFlow()
     val metadata: StateFlow<TrackMetadata?> = cast.metadata.asStateFlow()
-    val pairingPinRequest: StateFlow<String?> = cast.pinPrompt.requests
+    internal val pairingPinRequest: StateFlow<SecretRequest?> = cast.pinPrompt.requests
     val controlCommands: SharedFlow<MediaCommand> = cast.controlCommands.asSharedFlow()
     val audioBufferFlow: SharedFlow<ByteArray> = cast.audio.asSharedFlow()
 
@@ -171,9 +172,9 @@ class AudioCastService @JvmOverloads constructor(
 
     fun sendMetadata(metadata: TrackMetadata) = controller.metadata.submit(metadata)
 
-    fun submitPairingPin(host: String, pin: String) {
-        Log.d(TAG, "Pairing PIN entered for $host")
-        cast.pinPrompt.submit(pin)
+    fun submitPairingPin(host: String, secret: String) {
+        Log.d(TAG, "Pairing PIN or password entered for $host")
+        cast.pinPrompt.submit(secret)
     }
 
     fun resetPairingPinRequest() = cast.pinPrompt.cancel()

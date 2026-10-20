@@ -28,6 +28,9 @@ internal class RaopConnection(val host: String, val socket: Socket) {
     /** The session's audio sender, once streaming (for FLUSH's RTP-Info). */
     @Volatile var sender: RaopAudioSender? = null
 
+    /** Set once a password-protected receiver accepted our credentials. */
+    @Volatile var digest: DigestAuth? = null
+
     /** TXT `md`: which kinds of now-playing info the receiver takes. */
     @Volatile var metadataCaps: Set<Int> = emptySet()
 
@@ -81,6 +84,9 @@ internal class RaopConnection(val host: String, val socket: Socket) {
             val all = buildMap {
                 session?.let { put("Session", it) }
                 putAll(headers)
+                digest?.authorization(method, rtspUri(host, socket.port))?.let {
+                    put("Authorization", it)
+                }
                 if (body != null) put("Content-Length", body.size.toString())
             }
             RtspWire.send(output, RtspRequest(method, host, socket.port, cseq++, all, body))
