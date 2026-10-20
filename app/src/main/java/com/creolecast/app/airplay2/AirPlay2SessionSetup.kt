@@ -16,7 +16,6 @@ internal class AirPlay2SessionSetup(
         const val TAG = "AirPlay2Client"
         const val SOURCE_VERSION_NTP = "280.33"
         const val SOURCE_VERSION_PTP = "980.71.1"
-        const val BPLIST_CONTENT_TYPE = "application/x-apple-binary-plist"
         const val AUDIO_KEY_SIZE = 32
 
         fun positivePort(value: Any?): Int? = (value as? Long)?.toInt()?.takeIf { it > 0 }
@@ -53,7 +52,7 @@ internal class AirPlay2SessionSetup(
                 timingPeerAddress = localAddress
             )
         )
-        val resp = control.rtsp("SETUP", BPLIST_CONTENT_TYPE, plist)
+        val resp = control.rtsp("SETUP", BinaryPlist.CONTENT_TYPE, plist)
         val receivedAt = System.nanoTime()
         if (resp.code != HttpURLConnection.HTTP_OK) {
             Log.e(TAG, "SETUP session failed: ${resp.code}")
@@ -97,7 +96,7 @@ internal class AirPlay2SessionSetup(
                 useStreamConnections = useStreamConnections
             )
         )
-        val resp = control.rtsp("SETUP", BPLIST_CONTENT_TYPE, plist)
+        val resp = control.rtsp("SETUP", BinaryPlist.CONTENT_TYPE, plist)
         clock.reanchorIfFollowing(resp.headers)
         if (resp.code != HttpURLConnection.HTTP_OK) {
             Log.e(TAG, "SETUP stream failed: ${resp.code}")
