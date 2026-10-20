@@ -17,140 +17,85 @@ private const val TEARDOWN_USER_AGENT = "AirPlay/366.0"
 private const val DMAP_LENGTH_BYTES = 4
 
 /**
- * The live RAOP (AirPlay 1) control connections, keyed by receiver host: the RTSP socket,
- * its next CSeq and the RTSP Session id from SETUP. Volume and metadata commands and
- * teardown are sent through here while [RaopSession] streams audio.
+ * The live RAOP (AirPlay 1) control connections, keyed by receiver host. Volume and
+ * metadata commands, FLUSH and teardown are sent through here while [RaopSession] streams
+ * audio.
  *
- * The maps are mutated from independent Dispatchers.IO coroutines (the session, the
- * metadata refresh timer and volume commands run concurrently); synchronizedMap rather
- * than ConcurrentHashMap because the session id is legitimately null.
+ * Mutated from independent Dispatchers.IO coroutines (the session, the metadata refresh
+ * timer and volume commands run concurrently), hence synchronized.
  */
 internal class RaopRegistry {
-    private val sockets = Collections.synchronizedMap(mutableMapOf<String, Socket>())
-    private val cseqs = Collections.synchronizedMap(mutableMapOf<String, Int>())
-    private val sessions = Collections.synchronizedMap(mutableMapOf<String, String?>())
+    private val connections = Collections.synchronizedMap(mutableMapOf<String, RaopConnection>())
 
-    fun register(host: String, socket: Socket) {
-        sockets[host] = socket
-    }
-
-    fun setCSeq(host: String, cseq: Int) {
-        cseqs[host] = cseq
-    }
-
-    fun setSession(host: String, session: String?) {
-        sessions[host] = session
+    fun register(connection: RaopConnection) {
+        connections[connection.host] = connection
     }
 
     /** Sends an AirPlay volume in dB (see [airPlayVolume]) to every receiver. */
     fun sendVolume(dB: Double) {
-        val snapshot = synchronized(sockets) { sockets.toMap() }
-        snapshot.forEach { (host, socket) ->
-            try {
-                sendVolumeTo(host, socket, "volume: ${String.format(Locale.US, "%.6f", dB)}\r\n")
-            } catch (e: IOException) {
-                Log.d(LOG_TAG, "RAOP volume to $host failed: ${e.reason}")
+        val body = "volume: ${String.format(Locale.US, "%.6f", dB)}\r\n".toByteArray()
+        snapshot().forEach { connection ->
+            sendQuietly(connection, "volume") {
+                send("SET_PARAMETER", mapOf("Content-Type" to "text/parameters"), body)
             }
         }
     }
 
     /** Sends the track's DMAP-tagged title/artist/album to the receiver at [host]. */
     fun sendMetadata(host: String, metadata: TrackMetadata) {
-        val socket = sockets[host] ?: return
-        val output = socket.getOutputStream()
-        val session = sessions[host].orEmpty()
+        val connection = connections[host] ?: return
         val dmap = encodeDmapMetadata(metadata)
-        if (dmap.isNotEmpty()) {
-            try {
-                synchronized(output) {
-                    val cseq = cseqs[host] ?: 1
-                    RtspWire.send(
-                        output,
-                        RtspRequest(
-                            "SET_PARAMETER",
-                            host,
-                            socket.port,
-                            cseq,
-                            mapOf(
-                                "Session" to session,
-                                "Content-Type" to "application/x-dmap-tagged",
-                                "Content-Length" to dmap.size.toString()
-                            )
-                        )
-                    )
-                    output.write(dmap)
-                    output.flush()
-                    cseqs[host] = cseq + 1
-                }
-            } catch (e: IOException) {
-                Log.d(LOG_TAG, "RAOP metadata to $host failed: ${e.reason}")
+        if (dmap.isEmpty()) return
+        sendQuietly(connection, "metadata") {
+            send("SET_PARAMETER", mapOf("Content-Type" to "application/x-dmap-tagged"), dmap)
+        }
+    }
+
+    /**
+     * FLUSH for every receiver: it drops the audio it has buffered (about 1.5 s), so a
+     * pause takes effect at once instead of after the buffer played out.
+     */
+    fun flushAll() {
+        snapshot().forEach { connection ->
+            val sender = connection.sender ?: return@forEach
+            sendQuietly(connection, "FLUSH") {
+                val (sequence, rtpTime) = sender.nextPacket
+                send("FLUSH", mapOf("RTP-Info" to "seq=$sequence;rtptime=${rtpTime.toUInt()}"))
+                sender.markNextPacket()
             }
         }
     }
 
     /** Sends TEARDOWN for [dest] if its control connection is still open. */
     fun teardown(dest: CastDestination) {
-        val socket = sockets[dest.host]
-        if (socket == null || socket.isClosed) return
-        try {
-            val output = socket.getOutputStream()
-            synchronized(output) {
-                RtspWire.send(
-                    output,
-                    RtspRequest(
-                        "TEARDOWN",
-                        dest.host,
-                        socket.port,
-                        cseqs[dest.host] ?: 1,
-                        mapOf(
-                            "Session" to sessions[dest.host].orEmpty(),
-                            "User-Agent" to TEARDOWN_USER_AGENT
-                        )
-                    )
-                )
-            }
-        } catch (e: IOException) {
-            Log.d(LOG_TAG, "RAOP TEARDOWN to ${dest.host} failed: ${e.reason}")
+        val connection = connections[dest.host]
+        if (connection == null || connection.socket.isClosed) return
+        sendQuietly(connection, "TEARDOWN") {
+            send("TEARDOWN", mapOf("User-Agent" to TEARDOWN_USER_AGENT))
         }
     }
 
     /** Closes and forgets the control connection to [host] after a failed session. */
     fun forget(host: String) {
-        sockets.remove(host)?.close()
-        sessions.remove(host)
-        cseqs.remove(host)
+        connections.remove(host)?.socket?.close()
     }
 
-    fun snapshotSockets(): List<Socket> = synchronized(sockets) { sockets.values.toList() }
+    fun snapshotSockets(): List<Socket> = snapshot().map { it.socket }
 
-    fun clear() {
-        sockets.clear()
-        sessions.clear()
-        cseqs.clear()
-    }
+    fun clear() = connections.clear()
 
-    /** SET_PARAMETER with a text/parameters [volume] line, on the next CSeq. */
-    private fun sendVolumeTo(host: String, socket: Socket, volume: String) {
-        val output = socket.getOutputStream()
-        val session = sessions[host].orEmpty()
-        synchronized(output) {
-            val cseq = cseqs[host] ?: 1
-            RtspWire.send(
-                output,
-                RtspRequest(
-                    "SET_PARAMETER",
-                    host,
-                    socket.port,
-                    cseq,
-                    mapOf(
-                        "Session" to session,
-                        "Content-Type" to "text/parameters",
-                        "Content-Length" to volume.length.toString()
-                    ),
-                    volume
-                )
-            )
-            cseqs[host] = cseq + 1
+    private fun snapshot(): List<RaopConnection> =
+        synchronized(connections) { connections.values.toList() }
+
+    private fun sendQuietly(
+        connection: RaopConnection,
+        what: String,
+        request: RaopConnection.() -> Unit
+    ) {
+        try {
+            connection.request()
+        } catch (e: IOException) {
+            Log.d(LOG_TAG, "RAOP $what to ${connection.host} failed: ${e.reason}")
         }
     }
 }

@@ -61,6 +61,9 @@ internal class AirPlay2AudioStream(
         private set
 
     private var sequence = 0
+
+    /** Sequence number of the next frame. */
+    val nextSequence: Int get() = sequence
     private val ssrc = random.nextInt().toUInt().toLong()
     private var syncPacketSent = false
     private var socket: DatagramSocket? = null

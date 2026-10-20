@@ -2,8 +2,10 @@ package com.creolecast.app.cast
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.creolecast.app.AudioCastService
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastPlatform
+import com.creolecast.app.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -18,7 +20,13 @@ internal class ReceiverProtocols(
 ) {
     val dlna = DlnaController(ctx)
     val googleCast = GoogleCastController(ctx, volume)
-    private val airPlay2 = AirPlay2Session(ctx, identity, securePrefs, context)
+    private val airPlay2 = AirPlay2Session(
+        ctx,
+        identity,
+        securePrefs,
+        context.getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE),
+        context.getString(R.string.app_name)
+    )
 
     /** Launches the session(s) streaming to [dest] as children of the cast's [scope]. */
     fun launch(scope: CoroutineScope, dest: CastDestination) {

@@ -45,10 +45,18 @@ internal class MetadataPublisher(
     fun startWorker() {
         ctx.scope.launch {
             for (metadata in updates) {
+                val wasPlaying = ctx.metadata.value?.isPlaying
                 ctx.metadata.value = metadata
+                if (wasPlaying == true && !metadata.isPlaying) flushAirPlay()
                 publish(metadata)
             }
         }
+    }
+
+    /** On pause, AirPlay receivers drop what they buffered instead of playing it out. */
+    private suspend fun flushAirPlay() {
+        ctx.raop.flushAll()
+        ctx.airPlay2.flushAll()
     }
 
     fun submit(metadata: TrackMetadata) {

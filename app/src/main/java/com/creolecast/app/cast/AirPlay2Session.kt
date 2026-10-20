@@ -1,6 +1,5 @@
 package com.creolecast.app.cast
 
-import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
@@ -9,7 +8,6 @@ import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
 import com.creolecast.app.MediaCommand
-import com.creolecast.app.R
 import com.creolecast.app.airplay2.AIRPLAY2_LOW_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AIRPLAY2_STABLE_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AirPlay2Client
@@ -17,7 +15,9 @@ import com.creolecast.app.airplay2.AirPlay2ClientConfig
 import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -44,7 +44,10 @@ internal class AirPlay2Session(
     private val ctx: CastContext,
     private val identity: AirPlayIdentity,
     private val securePrefs: SharedPreferences,
-    private val context: Context
+    /** The app's settings ([AudioCastService.PREFS_NAME]). */
+    private val prefs: SharedPreferences,
+    /** Our name as receivers show it. */
+    private val clientName: String
 ) {
     private sealed interface ConnectStep {
         data class Retry(val pin: String?, val clearPinOnFailure: Boolean) : ConnectStep
@@ -52,23 +55,33 @@ internal class AirPlay2Session(
         data object Failed : ConnectStep
     }
 
+    /** Casts to [dest] until cancelled, reconnecting when the receiver is lost. */
+    suspend fun cast(dest: CastDestination) = withContext(ctx.ioDispatcher) {
+        ctx.state.value = CastState.CONNECTING
+        reconnecting(ctx, "AirPlay 2 ${dest.name}") { connectAndStream(dest) }
+    }
+
     /**
-     * Casts to [dest] until cancelled. This is the session's failure boundary:
-     * [AirPlay2Client] surfaces I/O, pairing-crypto and protocol failures as arbitrary
-     * exception types, and any of them must end the session in [CastState.ERROR] rather
-     * than crash the service.
+     * One connection. This is the session's failure boundary: [AirPlay2Client] surfaces
+     * I/O, pairing-crypto and protocol failures as arbitrary exception types, and none of
+     * them may crash the service.
      */
     @Suppress("TooGenericExceptionCaught") // Session failure boundary, see KDoc.
-    suspend fun cast(dest: CastDestination) = withContext(ctx.ioDispatcher) {
-        try {
-            ctx.state.value = CastState.CONNECTING
+    private suspend fun connectAndStream(dest: CastDestination): SessionEnd {
+        var streaming = false
+        return try {
             val client = connect(dest)
-            if (client != null) stream(dest, client)
+            if (client == null) {
+                SessionEnd.FAILED
+            } else {
+                streaming = true
+                stream(dest, client)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(LOG_TAG, "AirPlay 2 session failed for ${dest.name}: ${e.reason}")
-            ctx.state.value = CastState.ERROR
+            if (streaming) SessionEnd.LOST else SessionEnd.FAILED
         }
     }
 
@@ -116,7 +129,6 @@ internal class AirPlay2Session(
             }
 
             else -> {
-                ctx.state.value = CastState.ERROR
                 client.close()
                 ConnectStep.Failed
             }
@@ -126,7 +138,6 @@ internal class AirPlay2Session(
     private suspend fun promptForPin(host: String): ConnectStep {
         val pin = ctx.pinPrompt.request(host)
         return if (pin == null) {
-            ctx.state.value = CastState.ERROR
             ConnectStep.Failed
         } else {
             ConnectStep.Retry(pin, clearPinOnFailure = false)
@@ -151,21 +162,27 @@ internal class AirPlay2Session(
                 password = pin,
                 txtPk = txtPk,
                 credentialStore = credentialStore,
-                clientName = context.getString(R.string.app_name),
+                clientName = clientName,
                 initialVolumeDb = ctx.airPlayVolumeDb,
                 latencySamples = latencySamples()
             )
         )
+        return client
+    }
+
+    /** Streams to the connected [client] until cancelled or the receiver is lost. */
+    private suspend fun stream(dest: CastDestination, client: AirPlay2Client): SessionEnd {
+        val lost = CompletableDeferred<String>()
         client.eventListener = object : AirPlay2Client.EventListener {
             override fun onRemoteCommand(command: String) {
                 val cmd = MediaCommand.entries.find { it.name.equals(command, ignoreCase = true) }
                 if (cmd != null) ctx.scope.launch { ctx.controlCommands.emit(cmd) }
             }
-        }
-        return client
-    }
 
-    private suspend fun stream(dest: CastDestination, client: AirPlay2Client) {
+            override fun onDisconnected(reason: String) {
+                lost.complete(reason)
+            }
+        }
         ctx.markCasting()
         ctx.airPlay2.register(dest.host, client)
         ctx.metadata.value?.let {
@@ -173,7 +190,12 @@ internal class AirPlay2Session(
         }
         val framer = PcmFramer(ALAC_FRAME_BYTES) { frame -> client.sendAudioFrame(frame) }
         try {
-            ctx.audio.collect { framer.push(it) }
+            coroutineScope {
+                val audio = launch { ctx.audio.collect { framer.push(it) } }
+                Log.w(LOG_TAG, "AirPlay 2 ${dest.host} lost: ${lost.await()}")
+                audio.cancel()
+            }
+            return SessionEnd.LOST
         } finally {
             ctx.airPlay2.unregister(dest.host)
             // This runs on cancellation too (e.g. the user hit Stop), where an ordinary
@@ -205,14 +227,12 @@ internal class AirPlay2Session(
         }
     }
 
-    private fun latencySamples(): Int {
-        val prefs = context.getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
-        return if (prefs.getBoolean(AudioCastService.KEY_AIRPLAY2_STABLE_STREAMING, false)) {
+    private fun latencySamples(): Int =
+        if (prefs.getBoolean(AudioCastService.KEY_AIRPLAY2_STABLE_STREAMING, false)) {
             AIRPLAY2_STABLE_LATENCY_SAMPLES
         } else {
             AIRPLAY2_LOW_LATENCY_SAMPLES
         }
-    }
 
     private fun pinKey(host: String) = "airplay2_pin_$host"
 }
