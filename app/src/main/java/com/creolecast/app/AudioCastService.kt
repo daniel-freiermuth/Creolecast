@@ -58,8 +58,6 @@ class AudioCastService @JvmOverloads constructor(
         } else {
             activeDestinations.value.firstOrNull()?.name
         }
-    val serverPort: Int get() = activeDestinations.value.firstOrNull()?.port ?: 0
-    val serverPlatform: CastPlatform? get() = activeDestinations.value.firstOrNull()?.platform
 
     val state: StateFlow<CastState> = cast.state.asStateFlow()
     val stats: StateFlow<CastingStats> = cast.stats.asStateFlow()
