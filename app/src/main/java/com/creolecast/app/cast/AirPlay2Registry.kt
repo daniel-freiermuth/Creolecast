@@ -22,7 +22,7 @@ internal class AirPlay2Registry {
         clients.remove(host)
     }
 
-    /** Sends an absolute volume in dB (-30.0 silent to 0.0 max) to every receiver. */
+    /** Sends an AirPlay volume in dB (see [airPlayVolume]) to every receiver. */
     suspend fun setVolume(dB: Double) {
         snapshot().forEach { client ->
             bestEffort("AirPlay 2 volume") { client.setVolume(dB) }

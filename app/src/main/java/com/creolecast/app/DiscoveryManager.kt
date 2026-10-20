@@ -6,6 +6,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
+import com.creolecast.app.raop.RAOP_SESSION_TXT_KEYS
 import com.creolecast.app.raop.RaopDiscovery
 import java.net.Inet4Address
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -286,7 +287,9 @@ class DiscoveryManager(
                 sampleRate = device.sampleRate,
                 channels = 2,
                 platform = CastPlatform.AIRPLAY,
-                extra = "et=${device.encryptionType};sr=${device.sampleRate};cn=${device.codec}"
+                extra = ExtraFields.join(
+                    RAOP_SESSION_TXT_KEYS.mapNotNull { key -> device.txt[key]?.let { key to it } }
+                )
             )
             scope.launch {
                 discoveredServers[device.host] = server

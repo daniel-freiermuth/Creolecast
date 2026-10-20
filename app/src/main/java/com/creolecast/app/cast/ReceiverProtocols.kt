@@ -8,9 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-/** Classic RAOP port; receivers on it (or named "name@host") speak RAOP and get a TEARDOWN. */
-private const val RAOP_PORT = 5000
-
 /** Starts and stops the protocol session(s) for a destination, by its discovered platform. */
 internal class ReceiverProtocols(
     private val ctx: CastContext,
@@ -53,15 +50,9 @@ internal class ReceiverProtocols(
     private suspend fun stop(dest: CastDestination) {
         when (dest.platform) {
             CastPlatform.AIRPLAY2 -> ctx.airPlay2[dest.host]?.teardown()
-
             CastPlatform.DLNA -> dlna.stop(dest)
-
             CastPlatform.GOOGLE_CAST -> ctx.googleCast[dest.host]?.stop()
-
-            CastPlatform.AIRPLAY -> if (dest.port == RAOP_PORT || dest.name.contains("@")) {
-                ctx.raop.teardown(dest)
-            }
-
+            CastPlatform.AIRPLAY -> ctx.raop.teardown(dest)
             CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL -> Unit
         }
     }

@@ -149,7 +149,8 @@ internal class AirPlay2Session(
                 password = pin,
                 txtPk = txtPk,
                 credentialStore = credentialStore,
-                clientName = context.getString(R.string.app_name)
+                clientName = context.getString(R.string.app_name),
+                initialVolumeDb = ctx.airPlayVolumeDb
             )
         )
         client.eventListener = object : AirPlay2Client.EventListener {

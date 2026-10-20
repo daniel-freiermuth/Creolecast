@@ -35,7 +35,6 @@ internal class BinaryPlistReader(private val data: ByteArray) {
         const val MARKER_FALSE = 0x08
         const val MARKER_TRUE = 0x09
 
-        const val INT32_SIZE = 4
         const val FLOAT_SIZE = 4
         const val DOUBLE_SIZE = 8
 
@@ -142,14 +141,11 @@ internal class BinaryPlistReader(private val data: ByteArray) {
         else -> null // 0x00 null, 0x0F fill and other simple markers
     }
 
-    private fun readInteger(off: Int, objSize: Int): Long {
-        val bytes = 1 shl objSize
-        return if (bytes <= INT32_SIZE) {
-            data.readSizedInt(off + 1, bytes).toLong()
-        } else {
-            data.readSizedLong(off + 1, bytes)
-        }
-    }
+    // 1-, 2- and 4-byte integers are unsigned; only 8-byte ones are signed.
+    private fun readInteger(off: Int, objSize: Int): Long = data.readSizedLong(
+        off + 1,
+        1 shl objSize
+    )
 
     private fun readReal(off: Int, objSize: Int): Double = when (val bytes = 1 shl objSize) {
         FLOAT_SIZE -> Float.fromBits(data.readSizedInt(off + 1, FLOAT_SIZE)).toDouble()

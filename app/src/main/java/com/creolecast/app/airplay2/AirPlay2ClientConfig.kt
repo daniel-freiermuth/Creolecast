@@ -16,5 +16,7 @@ data class AirPlay2ClientConfig(
     /** The receiver's Ed25519 key from its mDNS TXT record, if it publishes one. */
     val txtPk: ByteArray? = null,
     val credentialStore: AirPlay2CredentialStore = InMemoryCredentialStore(),
-    val clientName: String = "CreoleCast"
+    val clientName: String = "CreoleCast",
+    /** Volume set when streaming starts: -30.0 to 0.0 dB, or -144.0 for mute. */
+    val initialVolumeDb: Double = 0.0
 )

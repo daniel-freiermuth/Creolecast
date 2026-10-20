@@ -7,6 +7,7 @@ import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
 import com.creolecast.app.raop.RaopCrypto
+import com.creolecast.app.raop.RaopTxt
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -16,6 +17,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.GeneralSecurityException
 import java.security.SecureRandom
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -148,8 +150,8 @@ internal class RaopSession(
             )
         )
 
-        // Initial volume 0 dB (full); the AirPlay range is -30 (silent) to 0 (max).
-        val volume = "volume: 0.000000\r\n"
+        // Start at the volume the user last chose rather than full volume.
+        val volume = "volume: ${String.format(Locale.US, "%.6f", ctx.airPlayVolumeDb)}\r\n"
         request(
             control,
             "SET_PARAMETER",
@@ -203,10 +205,9 @@ internal class RaopSession(
         throw checkNotNull(lastFailure)
     }
 
-    /** Generates the session AES key when the receiver asks for encryption (TXT `et` bit 0). */
+    /** Generates the session AES key when the receiver requires RSA/AES (see [RaopTxt]). */
     private fun negotiateEncryption(): RaopEncryption? {
-        val encryptionTypeBits = ExtraFields.get(dest.extra, "et")?.toIntOrNull() ?: 0
-        if ((encryptionTypeBits and 1) == 0) return null
+        if (!RaopTxt.requiresRsa(RaopTxt.intList(ExtraFields.get(dest.extra, "et")))) return null
         return try {
             val aesKey = ByteArray(AES_KEY_BYTES).also { SecureRandom().nextBytes(it) }
             val aesIv = ByteArray(AES_KEY_BYTES).also { SecureRandom().nextBytes(it) }
@@ -231,7 +232,7 @@ internal class RaopSession(
         "c=IN IP4 ${dest.host}\r\n" +
         "t=0 0\r\n" +
         "m=audio 0 RTP/AVP 96\r\n" +
-        "a=rtpmap:96 L16/44100/2\r\n" +
+        "a=rtpmap:96 AppleLossless\r\n" +
         "a=fmtp:96 352 0 16 40 10 14 2 255 0 0 44100\r\n" +
         cryptoLines +
         "a=control:rtp\r\n"

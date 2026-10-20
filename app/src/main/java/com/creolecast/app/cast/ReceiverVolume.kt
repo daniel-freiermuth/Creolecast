@@ -14,12 +14,18 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-/** AirPlay receiver volume runs from -30 dB (silent) to 0 dB (max). */
+/** AirPlay receiver volume runs from -30 dB (quietest) to 0 dB (max). */
 private const val DB_RANGE = 30.0
 private const val PERCENT_MAX = 100
 
+/** The AirPlay volume value that means mute; -30 dB is still audible. */
+private const val AIRPLAY_MUTE_DB = -144.0
+
+/** The AirPlay `volume:` value for [dB] on our -30..0 scale: the bottom means mute. */
+internal fun airPlayVolume(dB: Double): Double = if (dB <= -DB_RANGE) AIRPLAY_MUTE_DB else dB
+
 /**
- * The receiver volume, in steps of 1 dB from 0 (silent, -30 dB) to [MAX_STEPS] (0 dB):
+ * The receiver volume, in steps of 1 dB from 0 (muted) to [MAX_STEPS] (0 dB):
  * driven by the notification's buttons and, through a remote-playback MediaSession, by the
  * phone's hardware volume keys, and sent to whichever receivers are connected.
  */
@@ -91,12 +97,14 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         ctx.refreshStatus()
     }
 
-    /** Sends an absolute volume in dB (-30.0 silent to 0.0 max) to all active receivers. */
+    /** Sends an absolute volume in dB (-30.0 muted to 0.0 max) to all active receivers. */
     fun setDb(dB: Double) {
         Log.d(LOG_TAG, "Setting receiver volume to $dB dB")
+        val airPlayDb = airPlayVolume(dB)
+        ctx.airPlayVolumeDb = airPlayDb
         ctx.scope.launch {
-            ctx.raop.sendVolume(dB)
-            ctx.airPlay2.setVolume(dB)
+            ctx.raop.sendVolume(airPlayDb)
+            ctx.airPlay2.setVolume(airPlayDb)
             ctx.googleCast.setVolume((dB + DB_RANGE) / DB_RANGE)
             sendAriaCastVolume(dB)
         }

@@ -37,11 +37,8 @@ private const val PT_TIMING_REQUEST = 0x52
 private const val REQUEST_SEND_TIME_OFFSET = 24
 private const val NTP_TIMESTAMP_HALF_BYTES = 4
 
-/** Wait for the first NTP timing exchange before the first sync packet. */
-private const val FIRST_SYNC_DELAY_MS = 3000L
-
-/** Re-anchor the receiver's RTP-to-NTP mapping every 30 seconds. */
-private const val SYNC_INTERVAL_MS = 30_000L
+/** Re-anchor the receiver's RTP-to-NTP mapping every second, as iTunes does. */
+private const val SYNC_INTERVAL_MS = 1000L
 
 /** RTP version 2 header byte; the first sync packet also sets the extension bit. */
 private const val RTP_V2 = 0x80
@@ -103,7 +100,7 @@ internal class RaopClock(
      * until the receiver stops playing.
      */
     suspend fun sendSyncPackets() {
-        delay(FIRST_SYNC_DELAY_MS)
+        // The first one goes out at once: receivers anchor the stream on it.
         var isFirstSync = true
         while (currentCoroutineContext().isActive && sendToControlPort(syncPacket(isFirstSync))) {
             isFirstSync = false

@@ -9,19 +9,18 @@ import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
 
+/** TXT keys forwarded to the session, raw (`et` is a list, see [RaopTxt]). */
+val RAOP_SESSION_TXT_KEYS = listOf("et")
+
 data class RaopDevice(
     val name: String,
     val host: String,
     val port: Int,
-    val model: String? = null,
-    // TXT "et"
-    val encryptionType: Int = 0,
-    // TXT "sr"
-    val sampleRate: Int = 44100,
-    // TXT "cn" (0=PCM, 1=ALAC)
-    val codec: Int = 0
+    /** The TXT fields of [RAOP_SESSION_TXT_KEYS], `am` (model) and `sr` that are present. */
+    val txt: Map<String, String>
 ) {
-    fun supportsRsa(): Boolean = (encryptionType and 1) != 0
+    val model: String? get() = txt["am"]
+    val sampleRate: Int get() = txt["sr"]?.toIntOrNull() ?: 44100
 }
 
 class RaopDiscovery(private val context: Context) {
@@ -68,23 +67,18 @@ class RaopDiscovery(private val context: Context) {
                         // info.name is often "MAC@DeviceName", extract DeviceName
                         val name = info.name.substringAfter("@")
 
-                        val et = info.getPropertyString("et")?.toIntOrNull() ?: 0
-                        val sr = info.getPropertyString("sr")?.toIntOrNull() ?: 44100
-                        val cn = info.getPropertyString("cn")?.toIntOrNull() ?: 0
-                        val model = info.getPropertyString("am")
+                        val txt = (RAOP_SESSION_TXT_KEYS + listOf("am", "sr")).mapNotNull { key ->
+                            info.getPropertyString(key)?.let { key to it }
+                        }.toMap()
+                        Log.d("RaopDiscovery", "Found RAOP device: $name at $host:$port $txt")
 
-                        Log.d(
-                            "RaopDiscovery",
-                            "Found RAOP device: $name at $host:$port (et=$et, sr=$sr, cn=$cn)"
-                        )
-
-                        // Capability check as requested
-                        if (et == 0 || (et and 1) != 0) {
-                            onDeviceFound(RaopDevice(name, host, port, model, et, sr, cn))
+                        if (RaopTxt.isSupported(RaopTxt.intList(txt["et"]))) {
+                            onDeviceFound(RaopDevice(name, host, port, txt))
                         } else {
                             Log.w(
                                 "RaopDiscovery",
-                                "Device $name does not support RSA 1 encryption (et=$et), skipping"
+                                "Device $name needs FairPlay/MFi encryption (et=${txt["et"]}), " +
+                                    "skipping"
                             )
                         }
                     }
