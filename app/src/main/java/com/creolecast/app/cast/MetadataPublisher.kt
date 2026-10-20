@@ -26,7 +26,7 @@ private const val METADATA_TIMEOUT_MS = 5000L
 
 /**
  * Pushes the current track's metadata to the cast's receivers, in each protocol's way:
- * DMAP over RAOP, a plist via [com.creolecast.app.airplay2.AirPlay2Client], DIDL-Lite in
+ * DMAP over RAOP and [com.creolecast.app.airplay2.AirPlay2Client], DIDL-Lite in
  * a DLNA SetAVTransportURI, a CastV2 QUEUE_UPDATE and JSON to AriaCast/Snapcast's
  * `/metadata` endpoint.
  */
@@ -100,7 +100,7 @@ internal class MetadataPublisher(
         key: Pair<String?, String?>
     ) {
         when (dest.platform) {
-            CastPlatform.AIRPLAY -> ctx.raop.sendMetadata(dest.host, metadata)
+            CastPlatform.AIRPLAY -> ctx.raop.sendMetadata(dest.host, metadata, ctx.artworkBytes)
 
             CastPlatform.AIRPLAY2 -> publishToAirPlay2(dest, metadata)
 
@@ -118,7 +118,13 @@ internal class MetadataPublisher(
 
     private fun publishToAirPlay2(dest: CastDestination, metadata: TrackMetadata) {
         val client = ctx.airPlay2[dest.host] ?: return
-        client.sendMetadata(metadata.title, metadata.artist, metadata.album, ctx.artworkBytes)
+        client.sendMetadata(
+            metadata.title,
+            metadata.artist,
+            metadata.album,
+            metadata.durationMs,
+            ctx.artworkBytes
+        )
         val duration = metadata.durationMs
         val position = metadata.positionMs
         if (duration != null && position != null) client.sendProgress(position, duration)
