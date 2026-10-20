@@ -59,10 +59,22 @@ internal class RaopRegistry {
 
     /** Sends TEARDOWN for [dest] if its control connection is still open. */
     fun teardown(dest: CastDestination) {
-        val connection = connections[dest.host]
-        if (connection == null || connection.socket.isClosed) return
-        sendQuietly(connection, "TEARDOWN") {
-            send("TEARDOWN", mapOf("User-Agent" to TEARDOWN_USER_AGENT))
+        captureTeardown(dest)?.invoke()
+    }
+
+    /**
+     * Takes [dest]'s control connection now and returns the TEARDOWN send for it, or null
+     * without a connection. Stopping a cast runs that send on another thread, after [clear]
+     * may already have emptied the registry; looking the connection up only then would find
+     * nothing and silently skip the TEARDOWN.
+     */
+    fun captureTeardown(dest: CastDestination): (() -> Unit)? {
+        val connection = connections[dest.host] ?: return null
+        return send@{
+            if (connection.socket.isClosed) return@send
+            sendQuietly(connection, "TEARDOWN") {
+                send("TEARDOWN", mapOf("User-Agent" to TEARDOWN_USER_AGENT))
+            }
         }
     }
 
