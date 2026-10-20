@@ -10,9 +10,15 @@ import java.util.UUID
  * persisted in [prefs], so receivers see the same sender across casts.
  */
 internal class AirPlayIdentity(private val prefs: SharedPreferences) {
-    /** DACP-ID / Client-Instance: 16 upper-case hex digits. */
+    /**
+     * DACP-ID / Client-Instance: 16 upper-case hex digits, the first not 0: shairport-sync
+     * drops leading zeros from the `iTunes_Ctrl_<DACP-ID>` name it looks up, so an id with
+     * one never matches and DACP remote control never reaches us. Such ids stored by older
+     * versions are replaced.
+     */
     val dacpId: String by lazy {
-        stored("dacp_id") { UUID.randomUUID().toString().replace("-", "").take(16).uppercase() }
+        prefs.getString("dacp_id", null)?.takeUnless { it.startsWith('0') }
+            ?: generateDacpId().also { prefs.edit { putString("dacp_id", it) } }
     }
 
     /** Active-Remote: an 8-digit decimal token. */
@@ -25,6 +31,11 @@ internal class AirPlayIdentity(private val prefs: SharedPreferences) {
         stored("airplay_device_id") {
             (1..6).joinToString(":") { "%02X".format(Locale.US, (0..255).random()) }
         }
+    }
+
+    private fun generateDacpId(): String {
+        val hex = UUID.randomUUID().toString().replace("-", "").uppercase()
+        return hex.trimStart('0').take(16).padEnd(16, 'F')
     }
 
     private fun stored(key: String, generate: () -> String): String =
