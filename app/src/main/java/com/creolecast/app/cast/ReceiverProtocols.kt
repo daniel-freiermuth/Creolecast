@@ -54,25 +54,33 @@ internal class ReceiverProtocols(
         }
     }
 
-    /** Asks each receiver of the ending cast to stop, in parallel; the jobs end when sent. */
+    /**
+     * Asks each receiver of the ending cast to stop, in parallel; the jobs end when sent.
+     * RAOP connections are captured here, on the caller's thread: the caller clears the
+     * registry right after, possibly before the jobs have run.
+     */
     fun stopAll(destinations: List<CastDestination>): List<Job> = destinations.map { dest ->
-        ctx.scope.launch { bestEffort("Stopping ${dest.name}") { stop(dest) } }
+        val raopTeardown = if (mayUseRaop(dest)) ctx.raop.captureTeardown(dest) else null
+        ctx.scope.launch { bestEffort("Stopping ${dest.name}") { stop(dest, raopTeardown) } }
     }
 
-    private suspend fun stop(dest: CastDestination) {
+    private suspend fun stop(dest: CastDestination, raopTeardown: (() -> Unit)?) {
         when (dest.platform) {
             CastPlatform.AIRPLAY2 -> {
                 ctx.airPlay2[dest.host]?.teardown()
-                ctx.raop.teardown(dest) // the AirPlay 1 fallback, if it was used
+                raopTeardown?.invoke() // the AirPlay 1 fallback, if it was used
             }
 
             CastPlatform.DLNA -> dlna.stop(dest)
 
             CastPlatform.GOOGLE_CAST -> ctx.googleCast[dest.host]?.stop()
 
-            CastPlatform.AIRPLAY -> ctx.raop.teardown(dest)
+            CastPlatform.AIRPLAY -> raopTeardown?.invoke()
 
             CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL -> Unit
         }
     }
+
+    private fun mayUseRaop(dest: CastDestination) =
+        dest.platform == CastPlatform.AIRPLAY || dest.platform == CastPlatform.AIRPLAY2
 }
