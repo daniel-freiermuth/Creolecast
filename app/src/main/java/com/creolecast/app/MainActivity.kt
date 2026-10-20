@@ -270,10 +270,11 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             audioCastServiceFlow.collectLatest { s ->
-                s?.pairingPinRequest?.collectLatest { host ->
-                    if (host != null) {
+                s?.pairingPinRequest?.collectLatest { request ->
+                    if (request != null) {
+                        val host = request.host
                         showPairingPinDialog(
-                            host,
+                            request,
                             onSubmit = { pin -> audioCastService?.submitPairingPin(host, pin) },
                             onCancel = { audioCastService?.resetPairingPinRequest() }
                         )

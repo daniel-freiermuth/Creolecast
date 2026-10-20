@@ -18,6 +18,7 @@ internal class ReceiverProtocols(
     context: Context,
     volume: ReceiverVolume
 ) {
+    private val passwords = AirPlayPasswords(securePrefs)
     val dlna = DlnaController(ctx)
     val googleCast = GoogleCastController(ctx, volume)
     private val airPlay2 = AirPlay2Session(
@@ -36,7 +37,9 @@ internal class ReceiverProtocols(
 
             CastPlatform.GOOGLE_CAST -> scope.launch { googleCast.cast(dest) }
 
-            CastPlatform.AIRPLAY -> scope.launch { RaopSession.cast(ctx, dest, identity) }
+            CastPlatform.AIRPLAY -> scope.launch {
+                RaopSession.cast(ctx, dest, identity, passwords)
+            }
 
             CastPlatform.AIRPLAY2 -> scope.launch { airPlay2.cast(dest) }
 

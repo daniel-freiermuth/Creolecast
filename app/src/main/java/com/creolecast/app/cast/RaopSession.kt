@@ -33,6 +33,7 @@ private const val CONNECT_TIMEOUT_MS = 5000
 private const val CONTROL_READ_TIMEOUT_MS = 10000
 private const val USER_AGENT = "AirPlay/550.10"
 private const val AES_KEY_BYTES = 16
+private const val HTTP_UNAUTHORIZED = 401
 
 /** The receiver's UDP ports from the SETUP response's Transport header. */
 private data class ServerPorts(val audio: Int, val control: Int, val timing: Int)
@@ -50,7 +51,9 @@ internal class RaopSession(
     private val ctx: CastContext,
     private val dest: CastDestination,
     private val myIp: String,
-    private val identity: AirPlayIdentity
+    private val identity: AirPlayIdentity,
+    /** Access password for receivers that answer 401, if known. */
+    private val password: String?
 ) {
     // Local UDP ports for audio, control and timing, advertised in SETUP; run() closes them.
     private val audioUdp = DatagramSocket(0)
@@ -134,7 +137,7 @@ internal class RaopSession(
 
         request(control, "ANNOUNCE", mapOf("Content-Type" to "application/sdp"), sdp.toByteArray())
 
-        val setupResponse = request(
+        val setupReply = request(
             control,
             "SETUP",
             mapOf(
@@ -142,10 +145,8 @@ internal class RaopSession(
                     "control_port=${controlUdp.localPort};timing_port=${timingUdp.localPort}"
             )
         )
-        val session = setupResponse.find { it.startsWith("Session:", true) }
-            ?.substringAfter(":")?.substringBefore(";")?.trim()
-        control.session = session
-        val ports = parseServerPorts(setupResponse)
+        control.session = setupReply["Session"]?.substringBefore(";")?.trim()
+        val ports = parseServerPorts(setupReply["Transport"].orEmpty())
         Log.d(
             LOG_TAG,
             "RAOP SETUP: server audio=${ports.audio} control=${ports.control} " +
@@ -167,7 +168,8 @@ internal class RaopSession(
             control,
             "SET_PARAMETER",
             mapOf("Content-Type" to "text/parameters"),
-            volume.toByteArray()
+            volume.toByteArray(),
+            required = false
         )
         return ports to encryption
     }
@@ -244,20 +246,47 @@ internal class RaopSession(
         cryptoLines +
         "a=control:rtp\r\n"
 
-    /** Sends [method] plus the common headers on the next CSeq and reads the response. */
+    /**
+     * Sends [method] plus the common headers on the next CSeq and reads the reply. A 401 is
+     * answered with Digest credentials from [password]; without one, or if they are
+     * rejected, [RaopPasswordRequiredException] asks the caller for the password. Other
+     * failures of a [required] step throw [IOException].
+     */
     private fun request(
         control: RaopConnection,
         method: String,
         headers: Map<String, String>,
-        body: ByteArray? = null
-    ): List<String> {
-        control.send(method, commonHeaders + headers, body)
-        return RtspWire.readResponse(control.socket.getInputStream())
+        body: ByteArray? = null,
+        required: Boolean = true
+    ): RtspReply {
+        val exchange = {
+            control.send(method, commonHeaders + headers, body)
+            RtspWire.readReply(control.socket.getInputStream())
+        }
+        var reply = exchange()
+        if (reply.code == HTTP_UNAUTHORIZED) reply = authenticate(control, reply, exchange)
+        if (required && !reply.isSuccess) {
+            throw IOException("$method rejected by ${dest.host}: ${reply.code}")
+        }
+        return reply
     }
 
-    private fun parseServerPorts(setupResponse: List<String>): ServerPorts {
-        val transport = setupResponse.find { it.startsWith("Transport:", true) }
-            ?.substringAfter(":").orEmpty()
+    /** Answers a 401 [challenge] with Digest credentials and repeats the request. */
+    private fun authenticate(
+        control: RaopConnection,
+        challenge: RtspReply,
+        exchange: () -> RtspReply
+    ): RtspReply {
+        val digest = password?.let(::DigestAuth)
+            ?.takeIf { it.challenge(challenge["WWW-Authenticate"]) }
+            ?: throw RaopPasswordRequiredException(rejected = false)
+        control.digest = digest
+        val reply = exchange()
+        if (reply.code == HTTP_UNAUTHORIZED) throw RaopPasswordRequiredException(rejected = true)
+        return reply
+    }
+
+    private fun parseServerPorts(transport: String): ServerPorts {
         var audio = 0
         var control = 0
         var timing = 0
@@ -283,21 +312,52 @@ internal class RaopSession(
     companion object {
         /**
          * Casts to [dest] over RAOP until cancelled, reconnecting when the receiver is lost;
-         * a failure to even start ends in [CastState.ERROR].
+         * a failure to even start ends in [CastState.ERROR]. Password-protected receivers
+         * get the stored password, or the user is asked for it.
          */
-        suspend fun cast(ctx: CastContext, dest: CastDestination, identity: AirPlayIdentity) {
+        suspend fun cast(
+            ctx: CastContext,
+            dest: CastDestination,
+            identity: AirPlayIdentity,
+            passwords: AirPlayPasswords
+        ) {
             val myIp = localIpv4Address() ?: return
             ctx.state.value = CastState.CONNECTING
             // For audio-only casting RAOP (RTSP) is the most reliable and standard
             // AirPlay transport, so it is used even for AirPlay 2 capable receivers.
-            reconnecting(ctx, "RAOP ${dest.name}") {
-                try {
-                    RaopSession(ctx, dest, myIp, identity).run()
+            reconnecting(ctx, "RAOP ${dest.name}") { connect(ctx, dest, myIp, identity, passwords) }
+        }
+
+        /** One connection, asking for the password as often as the receiver rejects it. */
+        private suspend fun connect(
+            ctx: CastContext,
+            dest: CastDestination,
+            myIp: String,
+            identity: AirPlayIdentity,
+            passwords: AirPlayPasswords
+        ): SessionEnd {
+            var password = passwords[dest.host]
+            var end: SessionEnd? = null
+            while (end == null) {
+                end = try {
+                    RaopSession(ctx, dest, myIp, identity, password).run()
+                } catch (e: RaopPasswordRequiredException) {
+                    ctx.raop.forget(dest.host)
+                    if (e.rejected) passwords.remove(dest.host)
+                    Log.w(LOG_TAG, "RAOP ${dest.name}: ${e.reason}")
+                    password = ctx.pinPrompt.request(dest.host, SecretKind.PASSWORD)
+                    password?.let { passwords[dest.host] = it }
+                    if (password == null) SessionEnd.FAILED else null
                 } catch (e: IOException) {
                     Log.e(LOG_TAG, "AirPlay session failed for ${dest.name}: ${e.reason}")
                     SessionEnd.FAILED
                 }
             }
+            return end
         }
     }
 }
+
+/** The receiver wants a password: none was given, or it [rejected] the one we sent. */
+internal class RaopPasswordRequiredException(val rejected: Boolean) :
+    Exception(if (rejected) "password rejected" else "password required")
