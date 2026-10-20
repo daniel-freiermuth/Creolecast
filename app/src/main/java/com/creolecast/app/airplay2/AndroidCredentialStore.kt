@@ -5,6 +5,9 @@ import android.util.Base64
 import android.util.Log
 import androidx.core.content.edit
 
+/** Secure-prefs key prefix of AirPlay 2 pairings, by the receiver's device id. */
+const val AIRPLAY2_CREDENTIAL_PREFIX = "airplay2_cred_"
+
 /** Persists AirPlay 2 pairing identities in SharedPreferences. */
 class AndroidCredentialStore(private val prefs: SharedPreferences) : AirPlay2CredentialStore {
 
@@ -48,7 +51,7 @@ class AndroidCredentialStore(private val prefs: SharedPreferences) : AirPlay2Cre
         prefs.edit { remove(keyFor(deviceId)) }
     }
 
-    private fun keyFor(deviceId: String): String = "airplay2_cred_$deviceId"
+    private fun keyFor(deviceId: String): String = AIRPLAY2_CREDENTIAL_PREFIX + deviceId
 
     private companion object {
         const val TAG = "AndroidCredentialStore"

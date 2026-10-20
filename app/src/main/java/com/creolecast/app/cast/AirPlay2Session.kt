@@ -51,8 +51,8 @@ internal class AirPlay2Session(
     private val onReceiverVolume: (Double) -> Unit
 ) {
     private sealed interface ConnectStep {
-        data class Retry(val pin: String?, val clearPinOnFailure: Boolean) : ConnectStep
-        data class Connected(val client: AirPlay2Client, val pin: String?) : ConnectStep
+        data class Retry(val pin: String?) : ConnectStep
+        data class Connected(val client: AirPlay2Client) : ConnectStep
         data object Failed : ConnectStep
     }
 
@@ -86,22 +86,22 @@ internal class AirPlay2Session(
         }
     }
 
-    /** Connects, re-trying without a rejected saved PIN or with a PIN the user entered. */
+    /** Connects, re-trying with a PIN the user entered when the receiver asks for one. */
     private suspend fun connect(dest: CastDestination): AirPlay2Client? {
         val txtPk = parseTxtPk(dest.extra)
         // Long-term HomeKit pairing identities, keyed by the receiver's AirPlay DeviceID, so
         // pair-verify can reuse the key pair pair-setup registered instead of re-pairing.
         val credentialStore = AndroidCredentialStore(securePrefs)
-        val savedPin = securePrefs.getString(pinKey(dest.host), null)
-        var retry: ConnectStep.Retry? = ConnectStep.Retry(savedPin, savedPin != null)
+        // PINs are one-time codes and pairing stores long-term credentials, so a PIN that
+        // older versions saved is useless.
+        securePrefs.edit { remove(LEGACY_PIN_PREFIX + dest.host) }
+        var retry: ConnectStep.Retry? = ConnectStep.Retry(pin = null)
         var outcome: ConnectStep = ConnectStep.Failed
         while (retry != null) {
             outcome = attempt(dest, txtPk, credentialStore, retry)
             retry = outcome as? ConnectStep.Retry
         }
         val connected = outcome as? ConnectStep.Connected
-        // Persist the PIN so the user isn't asked again next time.
-        connected?.pin?.let { pin -> securePrefs.edit { putString(pinKey(dest.host), pin) } }
         return connected?.client
     }
 
@@ -118,22 +118,8 @@ internal class AirPlay2Session(
             client.close()
             return promptForPin(e.host)
         }
-        return when {
-            connected -> ConnectStep.Connected(client, retry.pin)
-
-            retry.clearPinOnFailure -> {
-                // The saved PIN was rejected: forget it and retry, so that
-                // NeedsPinException prompts the user for a new one.
-                securePrefs.edit { remove(pinKey(dest.host)) }
-                client.close()
-                ConnectStep.Retry(pin = null, clearPinOnFailure = false)
-            }
-
-            else -> {
-                client.close()
-                ConnectStep.Failed
-            }
-        }
+        if (!connected) client.close()
+        return if (connected) ConnectStep.Connected(client) else ConnectStep.Failed
     }
 
     private suspend fun promptForPin(host: String): ConnectStep {
@@ -141,7 +127,7 @@ internal class AirPlay2Session(
         return if (pin == null) {
             ConnectStep.Failed
         } else {
-            ConnectStep.Retry(pin, clearPinOnFailure = false)
+            ConnectStep.Retry(pin)
         }
     }
 
@@ -238,6 +224,7 @@ internal class AirPlay2Session(
         } else {
             AIRPLAY2_LOW_LATENCY_SAMPLES
         }
-
-    private fun pinKey(host: String) = "airplay2_pin_$host"
 }
+
+/** Secure-prefs key prefix of PINs saved by older versions. */
+private const val LEGACY_PIN_PREFIX = "airplay2_pin_"

@@ -78,11 +78,12 @@
     <string name="airplay_pin_message">Enter the code shown on the device screen (%1$s)</string>
     <string name="airplay_password_title">AirPlay password</string>
     <string name="airplay_password_message">%1$s is password-protected. Enter its AirPlay password.</string>
-    <string name="manage_airplay_pins">Manage AirPlay PINs</string>
-    <string name="manage_airplay_pins_desc">Manage saved AirPlay PINs for paired devices</string>
+    <string name="manage_airplay_pins">AirPlay passwords and pairings</string>
+    <string name="manage_airplay_pins_desc">Saved receiver passwords and AirPlay 2 pairings</string>
     <string name="airplay2_stable_streaming">Stable AirPlay 2 streaming</string>
     <string name="airplay2_stable_streaming_desc">Plays 0.5 s later so the speaker can recover audio lost on Wi-Fi. Off: lowest delay.</string>
-    <string name="no_pins_saved">No PINs saved</string>
-    <string name="edit_pin">Edit PIN</string>
-    <string name="delete_pin">Delete PIN</string>
+    <string name="no_pins_saved">No passwords or pairings saved</string>
+    <string name="edit_pin">Edit password</string>
+    <string name="delete_pin">Forget</string>
+    <string name="airplay2_paired">Paired (AirPlay 2)</string>
 </resources>

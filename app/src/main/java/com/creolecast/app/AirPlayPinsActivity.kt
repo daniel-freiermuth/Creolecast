@@ -2,6 +2,7 @@ package com.creolecast.app
 
 import android.content.Context
 import android.os.Bundle
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -13,6 +14,8 @@ import androidx.core.content.edit
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.creolecast.app.airplay2.AIRPLAY2_CREDENTIAL_PREFIX
+import com.creolecast.app.cast.AIRPLAY_PASSWORD_PREFIX
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
@@ -33,39 +36,45 @@ class AirPlayPinsActivity : AppCompatActivity() {
         recyclerView = findViewById(R.id.pinRecyclerView)
         emptyStateText = findViewById(R.id.emptyStateText)
 
-        adapter = PinAdapter(
-            onEdit = { host, currentPin -> showEditDialog(host, currentPin) },
-            onDelete = { host -> deletePin(host) }
-        )
+        adapter = PinAdapter(onEdit = ::showEditDialog, onDelete = ::deleteEntry)
 
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
 
-        loadPins()
+        loadEntries()
     }
 
-    private fun loadPins() {
-        val sharedPreferences =
-            getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
-        // PINs are only ever written with putString, so every PIN entry holds a String.
-        val pins = sharedPreferences.all.mapNotNull { (key, value) ->
-            val pin = value as? String
-            if (key.startsWith(PIN_KEY_PREFIX) && pin != null) {
-                key.removePrefix(PIN_KEY_PREFIX) to pin
-            } else {
-                null
+    /** One stored secret: a receiver's password (editable) or an AirPlay 2 pairing. */
+    private data class Entry(val key: String, val title: String, val subtitle: String) {
+        val editable: Boolean get() = key.startsWith(AIRPLAY_PASSWORD_PREFIX)
+    }
+
+    private fun securePrefs() =
+        getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun loadEntries() {
+        val entries = securePrefs().all.keys.mapNotNull { key ->
+            when {
+                key.startsWith(AIRPLAY_PASSWORD_PREFIX) ->
+                    Entry(key, key.removePrefix(AIRPLAY_PASSWORD_PREFIX), PASSWORD_MASK)
+
+                key.startsWith(AIRPLAY2_CREDENTIAL_PREFIX) -> Entry(
+                    key,
+                    key.removePrefix(AIRPLAY2_CREDENTIAL_PREFIX),
+                    getString(R.string.airplay2_paired)
+                )
+
+                else -> null
             }
-        }
+        }.sortedBy { it.title }
 
-        adapter.submitList(pins)
-        emptyStateText.visibility = if (pins.isEmpty()) View.VISIBLE else View.GONE
+        adapter.submitList(entries)
+        emptyStateText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    private fun showEditDialog(host: String, currentPin: String) {
+    private fun showEditDialog(entry: Entry) {
         val input = EditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            filters = arrayOf(android.text.InputFilter.LengthFilter(6))
-            setText(currentPin)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
         val container = android.widget.FrameLayout(this).apply {
@@ -80,46 +89,39 @@ class AirPlayPinsActivity : AppCompatActivity() {
 
         MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.edit_pin))
-            .setMessage(host)
+            .setMessage(entry.title)
             .setView(container)
             .setPositiveButton(R.string.save) { _, _ ->
-                val newPin = input.text.toString()
-                if (newPin.isNotEmpty()) {
-                    val sharedPreferences =
-                        getSharedPreferences(
-                            AudioCastService.SECURE_PREFS_NAME,
-                            Context.MODE_PRIVATE
-                        )
-                    sharedPreferences.edit { putString("$PIN_KEY_PREFIX$host", newPin) }
-                    loadPins()
+                val password = input.text.toString()
+                if (password.isNotEmpty()) {
+                    securePrefs().edit { putString(entry.key, password) }
+                    loadEntries()
                 }
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun deletePin(host: String) {
+    private fun deleteEntry(entry: Entry) {
         MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.delete_pin))
-            .setMessage(host)
+            .setMessage(entry.title)
             .setPositiveButton(R.string.delete_pin) { _, _ ->
-                val sharedPreferences =
-                    getSharedPreferences(AudioCastService.SECURE_PREFS_NAME, Context.MODE_PRIVATE)
-                sharedPreferences.edit { remove("$PIN_KEY_PREFIX$host") }
-                loadPins()
+                securePrefs().edit { remove(entry.key) }
+                loadEntries()
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
     private class PinAdapter(
-        private val onEdit: (String, String) -> Unit,
-        private val onDelete: (String) -> Unit
+        private val onEdit: (Entry) -> Unit,
+        private val onDelete: (Entry) -> Unit
     ) : RecyclerView.Adapter<PinAdapter.ViewHolder>() {
 
-        private var items = emptyList<Pair<String, String>>()
+        private var items = emptyList<Entry>()
 
-        fun submitList(newItems: List<Pair<String, String>>) {
+        fun submitList(newItems: List<Entry>) {
             val diff = DiffUtil.calculateDiff(PinDiff(items, newItems))
             items = newItems
             diff.dispatchUpdatesTo(this)
@@ -133,11 +135,12 @@ class AirPlayPinsActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val (host, pin) = items[position]
-            holder.hostText.text = host
-            holder.pinText.text = pin
-            holder.editButton.setOnClickListener { onEdit(host, pin) }
-            holder.deleteButton.setOnClickListener { onDelete(host) }
+            val entry = items[position]
+            holder.hostText.text = entry.title
+            holder.pinText.text = entry.subtitle
+            holder.editButton.visibility = if (entry.editable) View.VISIBLE else View.GONE
+            holder.editButton.setOnClickListener { onEdit(entry) }
+            holder.deleteButton.setOnClickListener { onDelete(entry) }
         }
 
         override fun getItemCount() = items.size
@@ -150,23 +153,21 @@ class AirPlayPinsActivity : AppCompatActivity() {
         }
     }
 
-    /** Rows are keyed by host; a changed PIN for the same host is a content change. */
-    private class PinDiff(
-        private val oldItems: List<Pair<String, String>>,
-        private val newItems: List<Pair<String, String>>
-    ) : DiffUtil.Callback() {
+    /** Rows are keyed by their preference key. */
+    private class PinDiff(private val oldItems: List<Entry>, private val newItems: List<Entry>) :
+        DiffUtil.Callback() {
         override fun getOldListSize() = oldItems.size
 
         override fun getNewListSize() = newItems.size
 
         override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
-            oldItems[oldItemPosition].first == newItems[newItemPosition].first
+            oldItems[oldItemPosition].key == newItems[newItemPosition].key
 
         override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
             oldItems[oldItemPosition] == newItems[newItemPosition]
     }
 
     private companion object {
-        const val PIN_KEY_PREFIX = "airplay2_pin_"
+        const val PASSWORD_MASK = "••••••"
     }
 }
