@@ -7,7 +7,6 @@ import com.creolecast.app.AudioCastService
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
-import com.creolecast.app.MediaCommand
 import com.creolecast.app.airplay2.AIRPLAY2_LOW_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AIRPLAY2_STABLE_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AirPlay2Client
@@ -47,7 +46,9 @@ internal class AirPlay2Session(
     /** The app's settings ([AudioCastService.PREFS_NAME]). */
     private val prefs: SharedPreferences,
     /** Our name as receivers show it. */
-    private val clientName: String
+    private val clientName: String,
+    /** The receiver changed its own volume (dB, see [airPlayVolume]). */
+    private val onReceiverVolume: (Double) -> Unit
 ) {
     private sealed interface ConnectStep {
         data class Retry(val pin: String?, val clearPinOnFailure: Boolean) : ConnectStep
@@ -175,8 +176,12 @@ internal class AirPlay2Session(
         val lost = CompletableDeferred<String>()
         client.eventListener = object : AirPlay2Client.EventListener {
             override fun onRemoteCommand(command: String) {
-                val cmd = MediaCommand.entries.find { it.name.equals(command, ignoreCase = true) }
-                if (cmd != null) ctx.scope.launch { ctx.controlCommands.emit(cmd) }
+                val cmd = mediaCommandFor(command) ?: return
+                ctx.scope.launch { ctx.controlCommands.emit(cmd) }
+            }
+
+            override fun onVolumeChange(db: Double) {
+                onReceiverVolume(db)
             }
 
             override fun onDisconnected(reason: String) {

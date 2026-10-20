@@ -208,7 +208,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         val recording = fairPlayDone &&
             setup.setupSession(timingSocket.localPort) &&
             setup.record()
-        if (recording) events.connect(setup.eventPort)
+        if (recording) events.connect(setup.eventPort, control.sharedSecret)
         val target = if (recording) {
             setup.setupStream(controlSocket.localPort, useStreamConnections)
         } else {

@@ -4,13 +4,16 @@ import android.util.Log
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.concurrent.thread
+import org.bouncycastle.crypto.InvalidCipherTextException
 
 /**
- * The receiver-to-sender event connection: volume changes and remote
- * commands, as binary plists in RTSP-framed POSTs.
+ * The receiver-to-sender event connection: volume changes and remote commands, as binary
+ * plists in RTSP-framed POSTs that we answer with 200. HAP-encrypted with the event keys
+ * when the session was paired.
  */
 internal class AirPlay2EventChannel(
     private val host: String,
@@ -24,20 +27,23 @@ internal class AirPlay2EventChannel(
     }
 
     private class EventMessage(
-        val method: String,
+        val startLine: String,
         val headers: Map<String, String>,
         val body: ByteArray?
     )
 
     private var socket: Socket? = null
+    private var cipher: HapCipher? = null
 
+    /** Connects to the receiver's event [port]; [sharedSecret] keys it if the session was paired. */
     @Suppress("MissingUseCall") // The reader thread needs it until close(); `use` would end it.
-    fun connect(port: Int) {
+    fun connect(port: Int, sharedSecret: ByteArray?) {
         if (port <= 0) return
         try {
             val s = Socket()
             s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
             socket = s
+            cipher = sharedSecret?.let(HapCipher::forEvents)
             startReadLoop(s)
             Log.d(TAG, "Event port $port connected")
         } catch (e: IOException) {
@@ -56,16 +62,25 @@ internal class AirPlay2EventChannel(
         }
     }
 
+    @Suppress("MissingUseCall") // Wraps the socket's stream, which close() ends.
     private fun startReadLoop(s: Socket) {
         thread(name = "ap2-event", isDaemon = true) {
             try {
-                val stream = s.getInputStream()
-                while (isRunning()) {
-                    val msg = readEventMessage(stream) ?: break
+                val stream = HapInputStream(s.getInputStream()) { cipher }
+                val output = s.getOutputStream()
+                // Runs until the receiver or close() ends the connection; it opens during
+                // setup, before the client counts as running.
+                var msg = readEventMessage(stream)
+                while (msg != null) {
                     dispatch(msg)
+                    reply(output, msg)
+                    msg = readEventMessage(stream)
                 }
             } catch (e: IOException) {
                 if (isRunning()) Log.w(TAG, "Event loop ended", e)
+            } catch (e: InvalidCipherTextException) {
+                // ChaCha20-Poly1305 rejected a frame: wrong keys or a corrupted stream.
+                if (isRunning()) Log.w(TAG, "Event channel undecryptable", e)
             }
         }
     }
@@ -79,7 +94,17 @@ internal class AirPlay2EventChannel(
         } else {
             null
         }
-        return EventMessage(head.lines[0].substringBefore(' '), headers.values, body)
+        return EventMessage(head.lines[0], headers.values, body)
+    }
+
+    /** Requests get a bare 200; Apple receivers reportedly drop a session left unanswered. */
+    private fun reply(output: OutputStream, msg: EventMessage) {
+        if (msg.startLine.startsWith("RTSP/")) return // a response, not a request
+        val cseq = msg.headers.entries.firstOrNull { it.key.equals("CSeq", ignoreCase = true) }
+        val text = "RTSP/1.0 200 OK\r\n" + cseq?.let { "CSeq: ${it.value}\r\n" }.orEmpty() + "\r\n"
+        val bytes = text.toByteArray(Charsets.US_ASCII)
+        cipher?.write(output, bytes) ?: output.write(bytes)
+        output.flush()
     }
 
     private fun dispatch(msg: EventMessage) {
@@ -95,6 +120,7 @@ internal class AirPlay2EventChannel(
     }
 
     private fun handle(event: Map<String, Any?>) {
+        Log.d(TAG, "Event: ${event["type"]}")
         when (event["type"]) {
             "volume" -> {
                 val db = when (val v = event["value"]) {
@@ -105,7 +131,11 @@ internal class AirPlay2EventChannel(
                 db?.let { listener()?.onVolumeChange(it) }
             }
 
-            "command" -> (event["name"] as? String)?.let { listener()?.onRemoteCommand(it) }
+            "command", "sendMediaRemoteCommand" -> {
+                val params = event["params"] as? Map<*, *>
+                val name = event["name"] as? String ?: params?.get("command") as? String
+                name?.let { listener()?.onRemoteCommand(it) }
+            }
         }
     }
 }

@@ -110,6 +110,11 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         }
     }
 
+    /** A receiver changed its own AirPlay volume to [dB] (see [airPlayVolume]). */
+    fun reflectReceiverDb(dB: Double) {
+        reflectReceiverLevel(if (dB <= -DB_RANGE) 0.0 else (dB + DB_RANGE) / DB_RANGE)
+    }
+
     /**
      * A receiver changed its own volume to [level] (0.0 silent to 1.0 max), from its
      * buttons or app: mirrors it on the phone's volume keys without echoing it back.
