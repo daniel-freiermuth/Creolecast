@@ -25,7 +25,8 @@ internal class ReceiverProtocols(
         identity,
         securePrefs,
         context.getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE),
-        context.getString(R.string.app_name)
+        context.getString(R.string.app_name),
+        volume::reflectReceiverDb
     )
 
     /** Launches the session(s) streaming to [dest] as children of the cast's [scope]. */
