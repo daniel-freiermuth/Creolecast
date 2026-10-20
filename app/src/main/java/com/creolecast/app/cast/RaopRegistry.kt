@@ -3,18 +3,13 @@ package com.creolecast.app.cast
 import android.util.Log
 import com.creolecast.app.CastDestination
 import com.creolecast.app.TrackMetadata
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Socket
-import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.Locale
 
 /** User-Agent of RAOP TEARDOWN requests. */
 private const val TEARDOWN_USER_AGENT = "AirPlay/366.0"
-
-/** Length prefix of one DMAP tag value. */
-private const val DMAP_LENGTH_BYTES = 4
 
 /**
  * The live RAOP (AirPlay 1) control connections, keyed by receiver host. Volume and
@@ -41,14 +36,10 @@ internal class RaopRegistry {
         }
     }
 
-    /** Sends the track's DMAP-tagged title/artist/album to the receiver at [host]. */
-    fun sendMetadata(host: String, metadata: TrackMetadata) {
+    /** Sends now-playing info to the receiver at [host] (see [RaopConnection.sendNowPlaying]). */
+    fun sendMetadata(host: String, metadata: TrackMetadata, artwork: ByteArray?) {
         val connection = connections[host] ?: return
-        val dmap = encodeDmapMetadata(metadata)
-        if (dmap.isEmpty()) return
-        sendQuietly(connection, "metadata") {
-            send("SET_PARAMETER", mapOf("Content-Type" to "application/x-dmap-tagged"), dmap)
-        }
+        sendQuietly(connection, "metadata") { sendNowPlaying(metadata, artwork) }
     }
 
     /**
@@ -98,20 +89,4 @@ internal class RaopRegistry {
             Log.d(LOG_TAG, "RAOP $what to ${connection.host} failed: ${e.reason}")
         }
     }
-}
-
-/** DMAP-tagged title (minm), artist (asar) and album (asal); absent fields are omitted. */
-private fun encodeDmapMetadata(metadata: TrackMetadata): ByteArray {
-    val out = ByteArrayOutputStream()
-    fun writeTag(tag: String, value: String?) {
-        if (value == null) return
-        val valueBytes = value.toByteArray(Charsets.UTF_8)
-        out.write(tag.toByteArray())
-        out.write(ByteBuffer.allocate(DMAP_LENGTH_BYTES).putInt(valueBytes.size).array())
-        out.write(valueBytes)
-    }
-    writeTag("minm", metadata.title)
-    writeTag("asar", metadata.artist)
-    writeTag("asal", metadata.album)
-    return out.toByteArray()
 }

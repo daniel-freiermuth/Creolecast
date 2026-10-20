@@ -79,7 +79,7 @@ internal class RaopSession(
             val (ports, encryption) = handshake()
             streaming = true
             ctx.markCasting()
-            ctx.metadata.value?.let { ctx.raop.sendMetadata(dest.host, it) }
+            ctx.metadata.value?.let { ctx.raop.sendMetadata(dest.host, it, ctx.artworkBytes) }
             stream(ports, encryption)
         } catch (e: IOException) {
             abort(e, streaming)
@@ -187,6 +187,7 @@ internal class RaopSession(
         socket.soTimeout = CONTROL_READ_TIMEOUT_MS
         socket.tcpNoDelay = true
         val connection = RaopConnection(dest.host, socket)
+        connection.metadataCaps = RaopTxt.intList(ExtraFields.get(dest.extra, "md"))
         ctx.raop.register(connection)
         liveness = RaopLiveness(socket) { connection.send("OPTIONS") }
         this.connection = connection

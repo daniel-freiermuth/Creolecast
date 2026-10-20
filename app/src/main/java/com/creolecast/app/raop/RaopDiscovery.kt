@@ -9,8 +9,8 @@ import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
 
-/** TXT keys forwarded to the session, raw (`et` is a list, see [RaopTxt]). */
-val RAOP_SESSION_TXT_KEYS = listOf("et")
+/** TXT keys forwarded to the session, raw (`et` and `md` are lists, see [RaopTxt]). */
+val RAOP_SESSION_TXT_KEYS = listOf("et", "md")
 
 data class RaopDevice(
     val name: String,

@@ -1,7 +1,10 @@
 package com.creolecast.app.airplay2
 
 import android.util.Log
+import com.creolecast.app.raop.NowPlayingTracker
 import com.creolecast.app.raop.RtpRetransmitter
+import com.creolecast.app.raop.artworkContentType
+import com.creolecast.app.raop.progressParameter
 import java.net.DatagramSocket
 import java.security.SecureRandom
 import java.util.Locale
@@ -38,8 +41,6 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         private const val FEATURE_PTP = 41
         private const val FEATURE_STREAM_CONNECTIONS = 59
 
-        private const val MILLIS_PER_SECOND = 1000L
-
         /** RTP times are unsigned 32-bit and wrap. */
         private const val UINT32_MASK = 0xFFFFFFFFL
     }
@@ -67,6 +68,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         isRunning = { running },
         listener = { eventListener }
     )
+    private val nowPlaying = NowPlayingTracker()
     private val heartbeat = AirPlay2Heartbeat(control, clock, audio, { running }) { reason ->
         eventListener?.onDisconnected(reason)
     }
@@ -101,36 +103,36 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         control.rtsp("SET_PARAMETER", "text/parameters", body.toByteArray(Charsets.UTF_8))
     }
 
+    /**
+     * Sends what changed of the now-playing info: the track as DMAP (shairport-sync ignores
+     * a binary plist here) and the artwork, both stamped with the RTP time of what plays now.
+     */
     fun sendMetadata(
         title: String?,
         artist: String?,
         album: String?,
-        artworkBytes: ByteArray? = null
+        durationMs: Long?,
+        artworkBytes: ByteArray?
     ) {
-        val dict = linkedMapOf<String, Any?>()
-        if (!title.isNullOrEmpty()) dict["dmap.itemname"] = title
-        if (!artist.isNullOrEmpty()) dict["daap.songartist"] = artist
-        if (!album.isNullOrEmpty()) dict["daap.songalbum"] = album
-        if (dict.isNotEmpty()) {
-            control.rtsp(
-                "SET_PARAMETER",
-                BinaryPlist.CONTENT_TYPE,
-                BinaryPlist.encode(dict)
-            )
+        val playing = (audio.rtpTimestamp - config.latencySamples).toLong() and UINT32_MASK
+        val rtpInfo = listOf("RTP-Info" to "rtptime=$playing")
+        nowPlaying.trackInfoIfChanged(title, artist, album, durationMs)?.let { dmap ->
+            control.rtsp("SET_PARAMETER", "application/x-dmap-tagged", dmap, rtpInfo)
         }
-        if (artworkBytes != null && artworkBytes.isNotEmpty()) {
-            control.rtsp("SET_PARAMETER", "image/jpeg", artworkBytes)
+        nowPlaying.artworkIfChanged(artworkBytes)?.let { image ->
+            control.rtsp("SET_PARAMETER", artworkContentType(image), image, rtpInfo)
         }
     }
 
-    /** Shows [positionMs] of [durationMs]; `start/now/end` are RTP times of what plays now. */
+    /** Shows [positionMs] of [durationMs] on the receiver. */
     fun sendProgress(positionMs: Long, durationMs: Long) {
         if (durationMs <= 0) return
-        val now =
-            (audio.rtpTimestamp - config.latencySamples).toLong() and UINT32_MASK
-        val start = (now - positionMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
-        val end = (start + durationMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
-        val body = "progress: $start/$now/$end\r\n".toByteArray(Charsets.UTF_8)
+        val body = progressParameter(
+            audio.rtpTimestamp - config.latencySamples,
+            positionMs,
+            durationMs,
+            config.sampleRate
+        )
         control.rtsp("SET_PARAMETER", "text/parameters", body)
     }
 

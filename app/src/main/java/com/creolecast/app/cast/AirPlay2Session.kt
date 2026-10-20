@@ -186,7 +186,7 @@ internal class AirPlay2Session(
         ctx.markCasting()
         ctx.airPlay2.register(dest.host, client)
         ctx.metadata.value?.let {
-            client.sendMetadata(it.title, it.artist, it.album, ctx.artworkBytes)
+            client.sendMetadata(it.title, it.artist, it.album, it.durationMs, ctx.artworkBytes)
         }
         val framer = PcmFramer(ALAC_FRAME_BYTES) { frame -> client.sendAudioFrame(frame) }
         try {
