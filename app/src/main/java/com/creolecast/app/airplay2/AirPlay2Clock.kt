@@ -60,17 +60,22 @@ internal class AirPlay2Clock(private val host: String, private val deviceId: Str
     @Suppress("MissingUseCall") // Runs for the session until close(); `use` would stop it here.
     private fun startPtpMaster(): Boolean {
         val master = PtpMaster(InetAddress.getByName(host), PtpMaster.clockIdFromDeviceId(deviceId))
-        val started = try {
+        try {
             master.start()
-            true
         } catch (e: IOException) {
             Log.e(TAG, "Receiver needs a sender PTP clock but UDP 319/320 cannot be bound", e)
-            false
+            throw PtpUnavailableException(e)
         }
-        if (started) {
-            ptpMaster = master
-            mediaClock.configureFromLocalClock(master.clockId)
-        }
-        return started
+        ptpMaster = master
+        mediaClock.configureFromLocalClock(master.clockId)
+        return true
     }
 }
+
+/**
+ * The receiver follows the sender's PTP clock (shairport-sync + nqptp), but this device
+ * can't be one: UDP 319/320 cannot be bound (unprivileged apps can only on Android 13+
+ * with an updated connectivity module and a 5.15+ kernel).
+ */
+class PtpUnavailableException(cause: IOException) :
+    IOException("UDP 319/320 cannot be bound for a PTP clock", cause)

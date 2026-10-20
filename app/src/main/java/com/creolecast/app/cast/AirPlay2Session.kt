@@ -7,12 +7,16 @@ import com.creolecast.app.AudioCastService
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
+import com.creolecast.app.PacketDirection
+import com.creolecast.app.PacketLogger
+import com.creolecast.app.PacketType
 import com.creolecast.app.airplay2.AIRPLAY2_LOW_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AIRPLAY2_STABLE_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AirPlay2Client
 import com.creolecast.app.airplay2.AirPlay2ClientConfig
 import com.creolecast.app.airplay2.AndroidCredentialStore
 import com.creolecast.app.airplay2.NeedsPinException
+import com.creolecast.app.airplay2.PtpUnavailableException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -56,11 +60,39 @@ internal class AirPlay2Session(
         data object Failed : ConnectStep
     }
 
-    /** Casts to [dest] until cancelled, reconnecting when the receiver is lost. */
+    /**
+     * Casts to [dest] until cancelled, reconnecting when the receiver is lost. A receiver
+     * that needs our PTP clock when this device can't run one gets AirPlay 1 instead, which
+     * AirPlay 2 receivers also speak.
+     */
     suspend fun cast(dest: CastDestination) = withContext(ctx.ioDispatcher) {
         ctx.state.value = CastState.CONNECTING
-        reconnecting(ctx, "AirPlay 2 ${dest.name}") { connectAndStream(dest) }
+        var ptpUnavailable = false
+        reconnecting(ctx, "AirPlay 2 ${dest.name}") {
+            try {
+                connectAndStream(dest)
+            } catch (e: PtpUnavailableException) {
+                Log.w(LOG_TAG, "AirPlay 2 ${dest.name}: ${e.reason}; falling back to AirPlay 1")
+                ptpUnavailable = true
+                SessionEnd.DONE
+            }
+        }
+        if (ptpUnavailable) {
+            PacketLogger.log(
+                PacketDirection.OUT,
+                PacketType.HANDSHAKE,
+                "${dest.name}: no PTP clock possible on this device, using AirPlay 1"
+            )
+            RaopSession.cast(ctx, raopFallback(dest), identity, AirPlayPasswords(securePrefs))
+        }
     }
+
+    /**
+     * [dest] as an AirPlay 1 destination. Its `_airplay` TXT has no RAOP fields, so it gets
+     * what AirPlay 2 receivers support: unencrypted audio and all now-playing info.
+     */
+    private fun raopFallback(dest: CastDestination) =
+        dest.copy(extra = ExtraFields.join(listOf("et" to "0,1", "md" to "0,1,2")))
 
     /**
      * One connection. This is the session's failure boundary: [AirPlay2Client] surfaces
@@ -79,6 +111,8 @@ internal class AirPlay2Session(
                 stream(dest, client)
             }
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: PtpUnavailableException) {
             throw e
         } catch (e: Exception) {
             Log.e(LOG_TAG, "AirPlay 2 session failed for ${dest.name}: ${e.reason}")

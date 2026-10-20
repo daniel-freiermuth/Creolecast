@@ -102,7 +102,11 @@ internal class MetadataPublisher(
         when (dest.platform) {
             CastPlatform.AIRPLAY -> ctx.raop.sendMetadata(dest.host, metadata, ctx.artworkBytes)
 
-            CastPlatform.AIRPLAY2 -> publishToAirPlay2(dest, metadata)
+            CastPlatform.AIRPLAY2 -> {
+                publishToAirPlay2(dest, metadata)
+                // When the receiver got AirPlay 1 instead (see AirPlay2Session).
+                ctx.raop.sendMetadata(dest.host, metadata, ctx.artworkBytes)
+            }
 
             CastPlatform.DLNA -> if (lastSentToDlna[dest.host] != key) {
                 dlna.updateMetadata(dest, metadata)

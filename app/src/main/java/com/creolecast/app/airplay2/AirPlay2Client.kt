@@ -83,11 +83,15 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
      * opened so far and also returns false.
      *
      * @throws NeedsPinException when the receiver wants a PIN we don't have.
+     * @throws PtpUnavailableException when the receiver needs our PTP clock and we can't run one.
      */
     @Suppress("TooGenericExceptionCaught") // Deliberate session boundary, see KDoc.
     fun connect(): Boolean = try {
         handshake().also { connected -> if (connected) startStreaming() }
     } catch (e: NeedsPinException) {
+        close()
+        throw e
+    } catch (e: PtpUnavailableException) {
         close()
         throw e
     } catch (e: Exception) {
