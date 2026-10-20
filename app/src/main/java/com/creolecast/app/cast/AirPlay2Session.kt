@@ -21,6 +21,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -193,6 +195,16 @@ internal class AirPlay2Session(
 
     /** Streams to the connected [client] until cancelled or the receiver is lost. */
     private suspend fun stream(dest: CastDestination, client: AirPlay2Client): SessionEnd {
+        // client.connect() blocks and can't observe cancellation, so Stop or a new cast may
+        // have cancelled this session while it was connecting. stop() has already set OFF
+        // and cleared the registry; marking CASTING or registering now would undo that.
+        if (!currentCoroutineContext().isActive) {
+            withContext(NonCancellable) {
+                client.teardown()
+                client.close()
+            }
+            return SessionEnd.DONE
+        }
         val lost = CompletableDeferred<String>()
         client.eventListener = object : AirPlay2Client.EventListener {
             override fun onRemoteCommand(command: String) {
