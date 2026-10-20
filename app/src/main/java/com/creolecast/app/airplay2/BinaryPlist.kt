@@ -3,6 +3,9 @@ package com.creolecast.app.airplay2
 /** Apple binary property lists (`bplist00`) as AirPlay 2 RTSP bodies use them. */
 object BinaryPlist {
 
+    /** RTSP Content-Type of a binary plist body. */
+    const val CONTENT_TYPE = "application/x-apple-binary-plist"
+
     // Realtime audio stream (RTP type 96) carrying ALAC.
     private const val STREAM_TYPE_REALTIME_AUDIO = 96L
     private const val COMPRESSION_TYPE_ALAC = 2L
@@ -53,6 +56,10 @@ object BinaryPlist {
         session["combinedGetInfoWithControlSetup"] = true
         return encode(session)
     }
+
+    /** Body of the stream TEARDOWN that precedes the session TEARDOWN. */
+    fun makeStreamTeardownPlist(): ByteArray =
+        encode(mapOf("streams" to listOf(mapOf("type" to STREAM_TYPE_REALTIME_AUDIO))))
 
     /**
      * Audio stream descriptor. Receivers advertising feature bit 59 take the

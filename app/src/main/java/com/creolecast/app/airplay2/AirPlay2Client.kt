@@ -109,7 +109,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         if (dict.isNotEmpty()) {
             control.rtsp(
                 "SET_PARAMETER",
-                "application/x-apple-binary-plist",
+                BinaryPlist.CONTENT_TYPE,
                 BinaryPlist.encode(dict)
             )
         }
@@ -133,7 +133,15 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
      *  receiver drops the session immediately instead of waiting out its own timeout. */
     fun teardown() {
         try {
-            if (control.sessionUrl.isNotEmpty()) control.rtsp("TEARDOWN", null, null)
+            if (control.sessionUrl.isNotEmpty()) {
+                // The stream first, then the session, as Apple's senders do.
+                control.rtsp(
+                    "TEARDOWN",
+                    BinaryPlist.CONTENT_TYPE,
+                    BinaryPlist.makeStreamTeardownPlist()
+                )
+                control.rtsp("TEARDOWN", null, null)
+            }
         } catch (_: Exception) {}
     }
 
