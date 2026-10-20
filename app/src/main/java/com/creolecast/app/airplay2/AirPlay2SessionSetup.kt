@@ -93,7 +93,7 @@ internal class AirPlay2SessionSetup(
                 sampleRate = config.sampleRate,
                 spf = config.frameSize,
                 latencyMin = 0L,
-                latencyMax = AirPlay2AudioStream.LATENCY_SAMPLES.toLong(),
+                latencyMax = config.latencySamples.toLong(),
                 useStreamConnections = useStreamConnections
             )
         )

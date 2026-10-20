@@ -6,7 +6,9 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.materialswitch.MaterialSwitch
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -27,6 +29,14 @@ class SettingsActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.airplayPinsLayout).setOnClickListener {
             startActivity(Intent(this, AirPlayPinsActivity::class.java))
+        }
+
+        val prefs = getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
+        findViewById<MaterialSwitch>(R.id.airplay2StableSwitch).apply {
+            isChecked = prefs.getBoolean(AudioCastService.KEY_AIRPLAY2_STABLE_STREAMING, false)
+            setOnCheckedChangeListener { _, checked ->
+                prefs.edit { putBoolean(AudioCastService.KEY_AIRPLAY2_STABLE_STREAMING, checked) }
+            }
         }
 
         findViewById<View>(R.id.notificationAccessLayout).setOnClickListener {
