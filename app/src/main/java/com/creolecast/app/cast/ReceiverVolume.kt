@@ -110,6 +110,12 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
         }
     }
 
+    /** A receiver's remote asked for [dB]: the phone follows, and every receiver gets it. */
+    fun applyReceiverDb(dB: Double) {
+        reflectReceiverDb(dB)
+        setDb(dB.coerceIn(-DB_RANGE, 0.0))
+    }
+
     /** A receiver changed its own AirPlay volume to [dB] (see [airPlayVolume]). */
     fun reflectReceiverDb(dB: Double) {
         reflectReceiverLevel(if (dB <= -DB_RANGE) 0.0 else (dB + DB_RANGE) / DB_RANGE)
