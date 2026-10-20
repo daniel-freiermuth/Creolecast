@@ -16,6 +16,7 @@ private const val RAOP_FRAME_BYTES = 1408
 /** Bytes per stereo 16-bit sample frame; RTP timestamps advance in samples. */
 private const val BYTES_PER_STEREO_SAMPLE = 4
 private const val RTP_HEADER_BYTES = 12
+private const val SEQUENCE_MASK = 0xFFFF
 
 /** RTP version 2, no padding/extension/CSRC. */
 private const val RTP_VERSION_2 = 0x80
@@ -37,9 +38,19 @@ internal class RaopAudioSender(
     private val crypto: RaopCrypto?,
     private val retransmitter: RtpRetransmitter
 ) {
-    private var sequence = 0
-    private var timestamp = AudioCastService.LATENCY
-    private var isFirstPacket = true
+    @Volatile private var sequence = 0
+
+    @Volatile private var timestamp = AudioCastService.LATENCY
+
+    @Volatile private var isFirstPacket = true
+
+    /** Sequence number and RTP time of the next packet, for FLUSH's RTP-Info. */
+    val nextPacket: Pair<Int, Int> get() = (sequence and SEQUENCE_MASK) to timestamp
+
+    /** Marks the next packet as the start of a new burst, as after a FLUSH. */
+    fun markNextPacket() {
+        isFirstPacket = true
+    }
     private val framer = PcmFramer(RAOP_FRAME_BYTES, ::send)
 
     /** Streams [audio] (captured at 44100 Hz natively, so no resampling) until cancelled. */

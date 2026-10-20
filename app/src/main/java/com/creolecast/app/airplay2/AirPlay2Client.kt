@@ -25,6 +25,9 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     interface EventListener {
         fun onVolumeChange(db: Double) {}
         fun onRemoteCommand(command: String) {}
+
+        /** The receiver stopped answering while streaming; the client should be closed. */
+        fun onDisconnected(reason: String) {}
     }
 
     companion object {
@@ -64,7 +67,9 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         isRunning = { running },
         listener = { eventListener }
     )
-    private val heartbeat = AirPlay2Heartbeat(control, clock, audio) { running }
+    private val heartbeat = AirPlay2Heartbeat(control, clock, audio, { running }) { reason ->
+        eventListener?.onDisconnected(reason)
+    }
     private var useStreamConnections = false
 
     /**
@@ -127,6 +132,13 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         val end = (start + durationMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
         val body = "progress: $start/$now/$end\r\n".toByteArray(Charsets.UTF_8)
         control.rtsp("SET_PARAMETER", "text/parameters", body)
+    }
+
+    /** Drops the audio the receiver has buffered, so a pause is heard at once. */
+    fun flush() {
+        val sequence = audio.nextSequence
+        val rtpTime = audio.rtpTimestamp.toLong() and UINT32_MASK
+        control.rtsp("FLUSH", null, null, listOf("RTP-Info" to "seq=$sequence;rtptime=$rtpTime"))
     }
 
     /** Best-effort graceful session end. Call before [close] where possible so the

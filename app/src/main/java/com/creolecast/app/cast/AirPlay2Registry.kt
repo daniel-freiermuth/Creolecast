@@ -29,6 +29,11 @@ internal class AirPlay2Registry {
         }
     }
 
+    /** FLUSH every receiver's buffered audio (see [AirPlay2Client.flush]). */
+    suspend fun flushAll() {
+        snapshot().forEach { client -> bestEffort("AirPlay 2 FLUSH") { client.flush() } }
+    }
+
     fun snapshot(): List<AirPlay2Client> = synchronized(clients) { clients.values.toList() }
 
     fun clear() = clients.clear()

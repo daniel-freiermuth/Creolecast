@@ -6,13 +6,13 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /** One RTSP request as the RAOP sender writes it, addressed to rtsp://[host]:[port]/AriaCast. */
-internal data class RtspRequest(
+internal class RtspRequest(
     val method: String,
     val host: String,
     val port: Int,
     val cseq: Int,
     val headers: Map<String, String>,
-    val body: String? = null
+    val body: ByteArray? = null
 )
 
 /** Plain-text RTSP framing for the RAOP (AirPlay 1) control connection. */
@@ -24,8 +24,7 @@ internal object RtspWire {
         text.append("CSeq: ${request.cseq}\r\n")
         request.headers.forEach { (k, v) -> text.append("$k: $v\r\n") }
         text.append("\r\n")
-        if (request.body != null) text.append(request.body)
-        output.write(text.toString().toByteArray())
+        output.write(text.toString().toByteArray() + (request.body ?: ByteArray(0)))
         output.flush()
     }
 
