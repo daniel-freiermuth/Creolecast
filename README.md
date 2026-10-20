@@ -14,10 +14,15 @@
   <li><b>AriaCast:</b> Protocol using binary WebSockets for low-latency, high-fidelity audio
     with rich metadata sync.</li>
   <li><b>snapcast:</b></li>
-  <li><b>AirPlay 1:</b> Seamless streaming to legacy Apple devices and Hi-Fi speakers.</li>
+  <li><b>AirPlay 1:</b> AirPort Express, AirPlay speakers and receivers: lossless ALAC, RSA/AES
+    encryption, password-protected receivers, now-playing text, artwork and progress, resends of
+    lost packets and automatic reconnects.</li>
   <li><b>AirPlay 2:</b> Encrypted streaming to Macs, Apple TVs and HomePods &mdash; HomeKit
     transient or PIN pairing with a persistent device identity, FairPlay SAP, an encrypted
-    control channel, PTP/NTP timing and live metadata, artwork and volume sync.</li>
+    control and event channels, PTP/NTP timing and live metadata, artwork and volume sync; falls
+    back to AirPlay 1 where this device can't provide the PTP clock a receiver needs.</li>
+  <li><b>Receiver remote control (DACP):</b> play/pause/next/volume from AirPlay receivers' remotes
+    reach the phone's player.</li>
   <li><b>DLNA / UPnP:</b> Universal compatibility with Smart TVs, AV Receivers, and media boxes.</li>
   <li><b>Google Cast:</b> Chromecast, Nest speakers/displays and Cast groups over CastV2, with
     now-playing metadata and artwork and two-way volume and play/pause sync.</li>
