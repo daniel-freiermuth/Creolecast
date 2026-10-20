@@ -61,10 +61,17 @@ internal class ReceiverProtocols(
 
     private suspend fun stop(dest: CastDestination) {
         when (dest.platform) {
-            CastPlatform.AIRPLAY2 -> ctx.airPlay2[dest.host]?.teardown()
+            CastPlatform.AIRPLAY2 -> {
+                ctx.airPlay2[dest.host]?.teardown()
+                ctx.raop.teardown(dest) // the AirPlay 1 fallback, if it was used
+            }
+
             CastPlatform.DLNA -> dlna.stop(dest)
+
             CastPlatform.GOOGLE_CAST -> ctx.googleCast[dest.host]?.stop()
+
             CastPlatform.AIRPLAY -> ctx.raop.teardown(dest)
+
             CastPlatform.SNAPCAST, CastPlatform.ARIACAST, CastPlatform.MANUAL -> Unit
         }
     }
