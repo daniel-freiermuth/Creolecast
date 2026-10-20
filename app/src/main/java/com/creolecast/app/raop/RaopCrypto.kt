@@ -8,6 +8,9 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 
+/** Rounds a length down to whole AES blocks (16 bytes). */
+private const val AES_BLOCK_MASK = 0xF.inv()
+
 class RaopCrypto {
     companion object {
         // The bundled (full) Bouncy Castle provider, passed by instance: looking "BC" up
@@ -44,26 +47,26 @@ class RaopCrypto {
     private lateinit var secretKeySpec: SecretKeySpec
     private lateinit var ivSpec: IvParameterSpec
 
+    // Re-initialised per packet to reset the IV; only the session's sender encrypts.
+    private val cipher: Cipher by lazy { Cipher.getInstance("AES/CBC/NoPadding", BOUNCY_CASTLE) }
+
     fun initAes(aesKey: ByteArray, iv: ByteArray) {
         secretKeySpec = SecretKeySpec(aesKey, "AES")
         ivSpec = IvParameterSpec(iv)
     }
 
     /**
-     * Encrypts audio data using AES-128-CBC.
-     * In RAOP, the IV is reset for every packet.
+     * Encrypts one audio payload with AES-128-CBC, the IV reset for every packet. Only whole
+     * 16-byte blocks are encrypted; receivers take a trailing partial block in the clear, so
+     * the payload keeps its length.
      */
     fun encryptAudio(data: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/CBC/NoPadding", BOUNCY_CASTLE)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
-
-        return if (data.size % 16 == 0) {
-            cipher.doFinal(data)
-        } else {
-            val paddedSize = ((data.size + 15) / 16) * 16
-            val paddedData = ByteArray(paddedSize)
-            System.arraycopy(data, 0, paddedData, 0, data.size)
-            cipher.doFinal(paddedData)
+        val whole = data.size and AES_BLOCK_MASK
+        val out = data.copyOf()
+        if (whole > 0) {
+            cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivSpec)
+            cipher.doFinal(data, 0, whole, out, 0)
         }
+        return out
     }
 }

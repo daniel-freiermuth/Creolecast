@@ -42,7 +42,7 @@ internal class RaopRegistry {
         sessions[host] = session
     }
 
-    /** Sends an absolute volume in dB (-30.0 silent to 0.0 max) to every receiver. */
+    /** Sends an AirPlay volume in dB (see [airPlayVolume]) to every receiver. */
     fun sendVolume(dB: Double) {
         val snapshot = synchronized(sockets) { sockets.toMap() }
         snapshot.forEach { (host, socket) ->
@@ -100,7 +100,7 @@ internal class RaopRegistry {
                     RtspRequest(
                         "TEARDOWN",
                         dest.host,
-                        dest.port,
+                        socket.port,
                         cseqs[dest.host] ?: 1,
                         mapOf(
                             "Session" to sessions[dest.host].orEmpty(),

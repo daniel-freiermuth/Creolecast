@@ -55,6 +55,12 @@ internal class CastContext(
     val airPlay2 = AirPlay2Registry()
     val googleCast = GoogleCastRegistry()
 
+    /**
+     * The AirPlay `volume:` last chosen ([airPlayVolume]); new RAOP and AirPlay 2 sessions
+     * start at it instead of full volume.
+     */
+    @Volatile var airPlayVolumeDb: Double = 0.0
+
     // Mutated from independent Dispatchers.IO coroutines (the session, the metadata
     // refresh timer and volume commands run concurrently), so a plain HashMap here
     // would be a real ConcurrentModificationException risk.

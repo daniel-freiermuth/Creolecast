@@ -77,6 +77,49 @@ class BinaryPlistTest {
         BinaryPlist.decode("not a plist".toByteArray())
     }
 
+    @Test
+    fun `values with colliding hash codes keep their own content`() {
+        // "Aa" and "BB" share a hashCode; the encoder must not alias one to the other.
+        val decoded = BinaryPlist.decode(BinaryPlist.encode(linkedMapOf("x" to "Aa", "y" to "BB")))
+        assertEquals("Aa", decoded["x"])
+        assertEquals("BB", decoded["y"])
+    }
+
+    @Test
+    fun `more than 256 objects use 2-byte references`() {
+        val input = (0 until 300).associate { "key$it" to it.toLong() }
+        assertEquals(input, BinaryPlist.decode(BinaryPlist.encode(input)))
+    }
+
+    @Test
+    fun `unicode, doubles, booleans and negatives round-trip`() {
+        val input = linkedMapOf<String, Any?>(
+            "streams" to listOf(mapOf("type" to 96L, "isMedia" to true)),
+            "name" to "Küche ♫ Speaker",
+            "volume" to -12.5,
+            "offset" to -3L,
+            "flag" to false
+        )
+        val decoded = BinaryPlist.decode(BinaryPlist.encode(input))
+        assertEquals(listOf(mapOf("type" to 96L, "isMedia" to true)), decoded["streams"])
+        assertEquals("Küche ♫ Speaker", decoded["name"])
+        assertEquals(-12.5, decoded["volume"])
+        assertEquals(-3L, decoded["offset"])
+        assertEquals(false, decoded["flag"])
+    }
+
+    @Test
+    fun `4-byte integers are unsigned`() {
+        // {"v": 0xFFFFFFFE} as a 4-byte int (marker 0x12)
+        val decoded = BinaryPlist.decode(
+            hex(
+                "62706c6973743030d10102517612fffffffe080b0d00000000000001010000000000" +
+                    "00000300000000000000000000000000000012"
+            )
+        )
+        assertEquals(0xFFFFFFFEL, decoded["v"])
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `decode fails on too short data`() {
         BinaryPlist.decode(ByteArray(10))

@@ -8,6 +8,8 @@ import javax.crypto.Cipher
 import org.bouncycastle.asn1.pkcs.RSAPrivateKey
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -39,6 +41,21 @@ class RaopCryptoTest {
         // In RAOP, IV is reset for every packet, so same data should give same ciphertext
         assertArrayEquals(encrypted1, encrypted2)
         assertNotEquals(data[0], encrypted1[0])
+    }
+
+    @Test
+    fun `trailing partial block stays in the clear and the length is unchanged`() {
+        val crypto = RaopCrypto().apply { initAes(ByteArray(16) { 1 }, ByteArray(16) { 2 }) }
+        val alacFrame = ByteArray(1412) { (it * 13).toByte() }
+        val encrypted = crypto.encryptAudio(alacFrame)
+
+        assertEquals(alacFrame.size, encrypted.size)
+        val whole = 1412 / 16 * 16
+        assertFalse(alacFrame.copyOf(whole).contentEquals(encrypted.copyOf(whole)))
+        assertArrayEquals(
+            alacFrame.copyOfRange(whole, alacFrame.size),
+            encrypted.copyOfRange(whole, encrypted.size)
+        )
     }
 
     private fun airportExpressPrivateKey(): PrivateKey {

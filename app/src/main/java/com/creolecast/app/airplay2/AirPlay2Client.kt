@@ -34,6 +34,9 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         private const val FEATURE_STREAM_CONNECTIONS = 59
 
         private const val MILLIS_PER_SECOND = 1000L
+
+        /** RTP times are unsigned 32-bit and wrap. */
+        private const val UINT32_MASK = 0xFFFFFFFFL
     }
 
     var eventListener: EventListener? = null
@@ -111,11 +114,14 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         }
     }
 
+    /** Shows [positionMs] of [durationMs]; `start/now/end` are RTP times of what plays now. */
     fun sendProgress(positionMs: Long, durationMs: Long) {
-        val start = 0L
-        val current = (positionMs * config.sampleRate / MILLIS_PER_SECOND) + audio.rtpTimestamp
-        val end = (durationMs * config.sampleRate / MILLIS_PER_SECOND)
-        val body = "progress: $start/$current/$end\r\n".toByteArray(Charsets.UTF_8)
+        if (durationMs <= 0) return
+        val now =
+            (audio.rtpTimestamp - AirPlay2AudioStream.LATENCY_SAMPLES).toLong() and UINT32_MASK
+        val start = (now - positionMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
+        val end = (start + durationMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
+        val body = "progress: $start/$now/$end\r\n".toByteArray(Charsets.UTF_8)
         control.rtsp("SET_PARAMETER", "text/parameters", body)
     }
 
@@ -186,7 +192,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     }
 
     private fun startStreaming() {
-        setVolume(0.0)
+        setVolume(config.initialVolumeDb)
         // Before the first 0xd7 anchor: it ties the next RTP timestamp to "now",
         // so audio must follow it immediately.
         clock.awaitReceiverLock()
