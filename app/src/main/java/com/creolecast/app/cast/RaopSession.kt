@@ -35,8 +35,38 @@ private const val USER_AGENT = "AirPlay/550.10"
 private const val AES_KEY_BYTES = 16
 private const val HTTP_UNAUTHORIZED = 401
 
-/** The receiver's UDP ports from the SETUP response's Transport header. */
-private data class ServerPorts(val audio: Int, val control: Int, val timing: Int)
+/** The receiver's UDP ports from the SETUP response's Transport header; 0 when absent. */
+internal data class ServerPorts(val audio: Int, val control: Int, val timing: Int)
+
+/** The RTSP control ports to try, in order, for a receiver advertising [port] (0 = none). */
+internal fun controlPortCandidates(port: Int): List<Int> {
+    val advertisedPort = if (port > 0) port else RAOP_PORT
+    return if (advertisedPort == AIRPLAY_PORT) {
+        listOf(AIRPLAY_PORT, RAOP_PORT)
+    } else {
+        listOf(advertisedPort)
+    }
+}
+
+/** The session id from a SETUP reply's `Session` header, without its `;timeout=` part. */
+internal fun parseSessionId(setupReply: RtspReply): String? =
+    setupReply["Session"]?.substringBefore(";")?.trim()
+
+/** The receiver's ports from a SETUP reply's `Transport` header [transport]. */
+internal fun parseServerPorts(transport: String): ServerPorts {
+    var audio = 0
+    var control = 0
+    var timing = 0
+    transport.split(";").forEach { part ->
+        val port = part.substringAfter("=").toIntOrNull() ?: 0
+        when {
+            part.trim().startsWith("server_port=") -> audio = port
+            part.trim().startsWith("control_port=") -> control = port
+            part.trim().startsWith("timing_port=") -> timing = port
+        }
+    }
+    return ServerPorts(audio, control, timing)
+}
 
 /** The session AES key: the cipher for audio, and the SDP lines announcing it. */
 private class RaopEncryption(val crypto: RaopCrypto, val sdpLines: String)
@@ -145,7 +175,7 @@ internal class RaopSession(
                     "control_port=${controlUdp.localPort};timing_port=${timingUdp.localPort}"
             )
         )
-        control.session = setupReply["Session"]?.substringBefore(";")?.trim()
+        control.session = parseSessionId(setupReply)
         val ports = parseServerPorts(setupReply["Transport"].orEmpty())
         Log.d(
             LOG_TAG,
@@ -179,13 +209,7 @@ internal class RaopSession(
     // so `use` would cut that TEARDOWN off.
     @Suppress("MissingUseCall")
     private fun openControlChannel(): RaopConnection {
-        val advertisedPort = if (dest.port > 0) dest.port else RAOP_PORT
-        val ports = if (advertisedPort == AIRPLAY_PORT) {
-            listOf(AIRPLAY_PORT, RAOP_PORT)
-        } else {
-            listOf(advertisedPort)
-        }
-        val socket = connectFirstReachable(ports)
+        val socket = connectFirstReachable(controlPortCandidates(dest.port))
         socket.soTimeout = CONTROL_READ_TIMEOUT_MS
         socket.tcpNoDelay = true
         val connection = RaopConnection(dest.host, socket)
@@ -284,21 +308,6 @@ internal class RaopSession(
         val reply = exchange()
         if (reply.code == HTTP_UNAUTHORIZED) throw RaopPasswordRequiredException(rejected = true)
         return reply
-    }
-
-    private fun parseServerPorts(transport: String): ServerPorts {
-        var audio = 0
-        var control = 0
-        var timing = 0
-        transport.split(";").forEach { part ->
-            val port = part.substringAfter("=").toIntOrNull() ?: 0
-            when {
-                part.trim().startsWith("server_port=") -> audio = port
-                part.trim().startsWith("control_port=") -> control = port
-                part.trim().startsWith("timing_port=") -> timing = port
-            }
-        }
-        return ServerPorts(audio, control, timing)
     }
 
     /** Failure after connecting: best-effort TEARDOWN, then drop the control connection. */
