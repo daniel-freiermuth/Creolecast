@@ -1,9 +1,11 @@
 package com.creolecast.app.airplay2
 
 import android.util.Log
+import com.creolecast.app.raop.RtpRetransmitter
 import java.net.DatagramSocket
 import java.security.SecureRandom
 import java.util.Locale
+import kotlin.concurrent.thread
 
 class NeedsPinException(val host: String) : Exception("PIN needed for host $host")
 
@@ -53,7 +55,9 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     private val setup = AirPlay2SessionSetup(config, control, clock, secureRandom)
     private val timingSocket = DatagramSocket(0)
     private val controlSocket = DatagramSocket(0)
-    private val audio = AirPlay2AudioStream(config, controlSocket, lock, secureRandom)
+    private val retransmitter = RtpRetransmitter(controlSocket)
+    private val audio =
+        AirPlay2AudioStream(config, controlSocket, retransmitter, lock, secureRandom)
     private val timingResponder = NtpTimingResponder(timingSocket) { running }
     private val events = AirPlay2EventChannel(
         config.host,
@@ -118,7 +122,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     fun sendProgress(positionMs: Long, durationMs: Long) {
         if (durationMs <= 0) return
         val now =
-            (audio.rtpTimestamp - AirPlay2AudioStream.LATENCY_SAMPLES).toLong() and UINT32_MASK
+            (audio.rtpTimestamp - config.latencySamples).toLong() and UINT32_MASK
         val start = (now - positionMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
         val end = (start + durationMs * config.sampleRate / MILLIS_PER_SECOND) and UINT32_MASK
         val body = "progress: $start/$now/$end\r\n".toByteArray(Charsets.UTF_8)
@@ -134,6 +138,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     }
 
     fun close() {
+        if (running) Log.d(TAG, "${retransmitter.packetsResent} packets re-sent")
         running = false
         heartbeat.interrupt()
         timingResponder.interrupt()
@@ -200,6 +205,7 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
         running = true
         if (!clock.usePtp) timingResponder.start()
         heartbeat.start()
+        thread(name = "ap2-resend", isDaemon = true) { retransmitter.serve { running } }
         Log.d(TAG, "AirPlay 2 connected successfully")
     }
 }

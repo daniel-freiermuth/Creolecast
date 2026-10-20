@@ -198,6 +198,9 @@ class AudioCastService @JvmOverloads constructor(
 
         const val PREFS_NAME = "CreoleCastPrefs"
 
+        /** Settings switch: AirPlay 2 with a 0.5 s buffer the receiver can re-fill. */
+        const val KEY_AIRPLAY2_STABLE_STREAMING = "airplay2_stable_streaming"
+
         // AirPlay 2 pairing PINs live in a separate prefs file, excluded from Android
         // backup/device-transfer (see data_extraction_rules.xml / backup_rules.xml) -
         // they shouldn't end up in a cloud backup or a new device's transfer alongside

@@ -2,6 +2,7 @@ package com.creolecast.app.airplay2
 
 import android.util.Log
 import com.creolecast.app.raop.AlacEncoder
+import com.creolecast.app.raop.RtpRetransmitter
 import java.io.Closeable
 import java.io.IOException
 import java.net.DatagramPacket
@@ -17,18 +18,18 @@ internal class AudioStreamTarget(val dataPort: Int, val controlPort: Int, val ke
  * stream key when there is one, and the sync packets on the control port that
  * tie RTP time to the network clock.
  *
- * The nonce counter shares [lock] with [AirPlay2ControlChannel] requests.
+ * The nonce counter shares [lock] with [AirPlay2ControlChannel] requests. Sent packets
+ * go to [retransmitter], verbatim (sealed), for the receiver's resend requests.
  */
 internal class AirPlay2AudioStream(
     private val config: AirPlay2ClientConfig,
     private val controlSocket: DatagramSocket,
+    private val retransmitter: RtpRetransmitter,
     private val lock: Any,
     private val random: SecureRandom
 ) : Closeable {
 
     companion object {
-        /** 85 ms at 44100 Hz, truncated — latency.go samplesFor44k1. */
-        const val LATENCY_SAMPLES = 3748
 
         private const val TAG = "AirPlay2Client"
 
@@ -94,6 +95,7 @@ internal class AirPlay2AudioStream(
         val target = socket
         if (target != null) {
             val datagram = key?.let { seal(packet, it) } ?: packet
+            retransmitter.record(sequence, datagram)
             target.send(
                 DatagramPacket(
                     datagram,
@@ -114,7 +116,7 @@ internal class AirPlay2AudioStream(
     /**
      * TimeAnnounce on the control port: 20 bytes / payload type 0xd4 for NTP,
      * 28 bytes / 0xd7 plus the timeline id for PTP (audio.go sendSyncPacketAt).
-     * The frame at `rtpTimestamp - latency` is anchored to the network time.
+     * The frame at `rtpTimestamp - latencySamples` is anchored to the network time.
      */
     fun sendSync(clock: AirPlay2Clock) {
         val networkTime = if (controlPort > 0) clock.networkTime() else null
@@ -177,7 +179,7 @@ internal class AirPlay2AudioStream(
         WireBytes.putUInt32(
             packet,
             SYNC_ANCHOR_RTP_OFFSET,
-            (rtpTimestamp - LATENCY_SAMPLES).toLong()
+            (rtpTimestamp - config.latencySamples).toLong()
         )
         if (usePtp) {
             WireBytes.putUInt64(

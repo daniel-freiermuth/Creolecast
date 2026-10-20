@@ -10,6 +10,8 @@ import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
 import com.creolecast.app.MediaCommand
 import com.creolecast.app.R
+import com.creolecast.app.airplay2.AIRPLAY2_LOW_LATENCY_SAMPLES
+import com.creolecast.app.airplay2.AIRPLAY2_STABLE_LATENCY_SAMPLES
 import com.creolecast.app.airplay2.AirPlay2Client
 import com.creolecast.app.airplay2.AirPlay2ClientConfig
 import com.creolecast.app.airplay2.AndroidCredentialStore
@@ -150,7 +152,8 @@ internal class AirPlay2Session(
                 txtPk = txtPk,
                 credentialStore = credentialStore,
                 clientName = context.getString(R.string.app_name),
-                initialVolumeDb = ctx.airPlayVolumeDb
+                initialVolumeDb = ctx.airPlayVolumeDb,
+                latencySamples = latencySamples()
             )
         )
         client.eventListener = object : AirPlay2Client.EventListener {
@@ -199,6 +202,15 @@ internal class AirPlay2Session(
             }
         } else {
             null
+        }
+    }
+
+    private fun latencySamples(): Int {
+        val prefs = context.getSharedPreferences(AudioCastService.PREFS_NAME, Context.MODE_PRIVATE)
+        return if (prefs.getBoolean(AudioCastService.KEY_AIRPLAY2_STABLE_STREAMING, false)) {
+            AIRPLAY2_STABLE_LATENCY_SAMPLES
+        } else {
+            AIRPLAY2_LOW_LATENCY_SAMPLES
         }
     }
 

@@ -3,6 +3,7 @@ package com.creolecast.app.cast
 import com.creolecast.app.AudioCastService
 import com.creolecast.app.raop.AlacEncoder
 import com.creolecast.app.raop.RaopCrypto
+import com.creolecast.app.raop.RtpRetransmitter
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -25,14 +26,16 @@ private const val RTP_AUDIO_PAYLOAD_WITH_MARKER = 0xE0
 
 /**
  * Sends captured PCM to a RAOP receiver as RTP over UDP: 1408-byte ALAC "uncompressed"
- * frames, AES-encrypted when the session negotiated a key.
+ * frames, AES-encrypted when the session negotiated a key. Each packet is kept in
+ * [retransmitter] for re-sending.
  */
 internal class RaopAudioSender(
     private val socket: DatagramSocket,
     private val serverAddress: InetAddress,
     private val serverAudioPort: Int,
     private val rtpSessionId: Int,
-    private val crypto: RaopCrypto?
+    private val crypto: RaopCrypto?,
+    private val retransmitter: RtpRetransmitter
 ) {
     private var sequence = 0
     private var timestamp = AudioCastService.LATENCY
@@ -59,6 +62,7 @@ internal class RaopAudioSender(
         isFirstPacket = false
 
         val payload = rtpHeader.array() + alacFrame
+        retransmitter.record(sequence - 1, payload)
         socket.send(DatagramPacket(payload, payload.size, serverAddress, serverAudioPort))
     }
 }

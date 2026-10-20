@@ -8,6 +8,7 @@ import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
 import com.creolecast.app.raop.RaopCrypto
 import com.creolecast.app.raop.RaopTxt
+import com.creolecast.app.raop.RtpRetransmitter
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -20,6 +21,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -83,18 +85,23 @@ internal class RaopSession(
             val clock = RaopClock(timingUdp, controlUdp, serverAddress, ports.control)
             val timingJob = launch(ctx.ioDispatcher) { clock.answerTimingRequests() }
             val syncJob = launch(ctx.ioDispatcher) { clock.sendSyncPackets() }
+            val retransmitter = RtpRetransmitter(controlUdp)
+            val resendJob = launch(ctx.ioDispatcher) { retransmitter.serve { isActive } }
             try {
                 val sender = RaopAudioSender(
                     audioUdp,
                     serverAddress,
                     ports.audio,
                     rtpSessionId,
-                    encryption?.crypto
+                    encryption?.crypto,
+                    retransmitter
                 )
                 sender.stream(ctx.audio)
             } finally {
                 syncJob.cancel()
                 timingJob.cancel()
+                resendJob.cancel()
+                Log.d(LOG_TAG, "RAOP ${dest.host}: ${retransmitter.packetsResent} packets re-sent")
             }
         } catch (e: IOException) {
             abort(e)
