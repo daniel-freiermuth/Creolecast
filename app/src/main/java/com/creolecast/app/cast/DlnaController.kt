@@ -10,6 +10,8 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import java.io.IOException
 
 /**
  * DLNA/UPnP casts: points the renderer's AVTransport at our WAV stream
@@ -73,11 +75,19 @@ internal class DlnaController(private val ctx: CastContext) {
         }
     }
 
+    /**
+     * Sends one AVTransport [action]. A renderer rejects an action with a SOAP fault
+     * (HTTP 500 carrying a UPnPError) rather than a dropped connection, and Ktor does not
+     * throw on such a status, so it is turned into an [IOException] for [httpExchange].
+     */
     private suspend fun post(controlUrl: String, action: String, body: String) {
-        ctx.client.post(controlUrl) {
+        val response = ctx.client.post(controlUrl) {
             header("SoapAction", "\"${DlnaSoap.AV_TRANSPORT}#$action\"")
             contentType(ContentType.parse("text/xml; charset=utf-8"))
             setBody(body)
+        }
+        if (!response.status.isSuccess()) {
+            throw IOException("Renderer rejected $action: HTTP ${response.status}")
         }
     }
 
