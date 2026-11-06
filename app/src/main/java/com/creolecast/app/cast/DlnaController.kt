@@ -4,6 +4,9 @@ import android.util.Log
 import com.creolecast.app.CastDestination
 import com.creolecast.app.CastState
 import com.creolecast.app.ExtraFields
+import com.creolecast.app.PacketDirection
+import com.creolecast.app.PacketLogger
+import com.creolecast.app.PacketType
 import com.creolecast.app.TrackMetadata
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -18,8 +21,10 @@ import io.ktor.http.contentType
 internal class DlnaController(private val ctx: CastContext) {
     /** Stops whatever the renderer plays, then sets our stream as its URI and plays it. */
     suspend fun start(dest: CastDestination) {
-        val controlUrl = avTransportUrl(dest.extra) ?: return
-        val streamUrl = localStreamUrl() ?: return
+        val controlUrl = avTransportUrl(dest.extra)
+            ?: return failToStart("${dest.name} has no AVTransport service to play on")
+        val streamUrl = localStreamUrl()
+            ?: return failToStart("no local IPv4 address to serve the stream to ${dest.name}")
         httpExchange {
             // A renderer that is not playing may reject Stop; that must not stop the cast.
             httpExchange { post(controlUrl, "Stop", DlnaSoap.PRE_PLAY_STOP_BODY) }
@@ -90,4 +95,10 @@ internal class DlnaController(private val ctx: CastContext) {
 
     private fun localStreamUrl(): String? =
         localIpv4Address()?.let { "http://$it:$STREAM_PORT/stream.wav" }
+
+    /** Ends a cast that cannot even start in [CastState.ERROR] instead of CONNECTING. */
+    private fun failToStart(reason: String) {
+        PacketLogger.log(PacketDirection.IN, PacketType.HANDSHAKE, "DLNA: $reason")
+        ctx.state.value = CastState.ERROR
+    }
 }
