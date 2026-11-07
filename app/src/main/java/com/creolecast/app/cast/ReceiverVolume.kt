@@ -6,6 +6,7 @@ import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.util.Log
+import com.creolecast.app.CastPlatform
 import com.creolecast.app.PacketDirection
 import com.creolecast.app.PacketLogger
 import com.creolecast.app.PacketType
@@ -35,6 +36,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
 
     private var mediaSession: MediaSession? = null
     private var volumeProvider: VolumeProvider? = null
+    private val dlna = DlnaController(ctx)
 
     /**
      * Starts a MediaSession with a remote VolumeProvider so the phone's hardware volume
@@ -107,6 +109,14 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
             ctx.airPlay2.setVolume(airPlayDb)
             ctx.googleCast.setVolume((dB + DB_RANGE) / DB_RANGE)
             sendAriaCastVolume(dB)
+            sendDlnaVolume(dB)
+        }
+    }
+
+    private suspend fun sendDlnaVolume(dB: Double) {
+        val volume = dlnaVolumeForDb(dB)
+        ctx.destinations.value.filter { it.platform == CastPlatform.DLNA }.forEach { dest ->
+            bestEffort("DLNA volume") { dlna.setVolume(dest, volume) }
         }
     }
 
@@ -154,5 +164,12 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
 
     companion object {
         const val MAX_STEPS = 30
+
+        /**
+         * Maps a receiver volume in dB (-30.0 muted to 0.0 max) to a UPnP RenderingControl
+         * volume (0..100). Multiplying before dividing makes whole-dB steps exact.
+         */
+        fun dlnaVolumeForDb(dB: Double): Int =
+            ((dB + DB_RANGE) * PERCENT_MAX / DB_RANGE).toInt().coerceIn(0, PERCENT_MAX)
     }
 }
