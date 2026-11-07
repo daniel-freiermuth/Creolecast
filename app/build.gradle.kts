@@ -86,6 +86,11 @@ android {
         // accessors Kotlin generates for private access from lambdas and nested classes.
         disable += setOf("LogConditional", "SyntheticAccessor")
     }
+    testOptions {
+        // android.util.Log and other framework stubs return defaults in JVM unit tests
+        // instead of throwing, so protocol classes that log can be tested directly.
+        unitTests.isReturnDefaultValues = true
+    }
     packaging {
         jniLibs { useLegacyPackaging = false }
     }
