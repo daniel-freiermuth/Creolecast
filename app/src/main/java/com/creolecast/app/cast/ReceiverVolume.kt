@@ -93,6 +93,7 @@ internal class ReceiverVolume(private val context: Context, private val ctx: Cas
     /** One step up (+1) or down (-1), from the notification's volume buttons. */
     fun adjust(direction: Int) {
         steps = (steps + direction).coerceIn(0, MAX_STEPS)
+        volumeProvider?.currentVolume = steps
         setDb((steps - MAX_STEPS).toDouble())
         ctx.refreshStatus()
     }
