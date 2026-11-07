@@ -44,8 +44,34 @@ internal object MdnsServers {
         )
     }
 
+    /**
+     * The key and entry to store for a freshly resolved [server], given the entries already
+     * [stored]. [isRaop] tells an _raop._tcp resolve apart from an _airplay._tcp one; see
+     * [merged].
+     */
+    fun resolvedEntry(
+        stored: Map<String, Server>,
+        server: Server,
+        isRaop: Boolean
+    ): Pair<String, Server> {
+        val name = server.name
+        val hostAddress = server.host
+        // A different device advertising the same friendly name must not silently
+        // take over an already-discovered entry's host - that's exactly how mDNS
+        // name spoofing would redirect a user who trusts a familiar name into
+        // casting to an attacker's box instead. Key it separately and disambiguate
+        // the display name so both stay visible rather than one clobbering the other.
+        // AirPlay entries are stored under "name::platform", so look them up that way.
+        val existingSameName = stored[storageKey(name, server.platform)]
+        val spoofedName = existingSameName != null && existingSameName.host != hostAddress
+        val baseKey = if (spoofedName) "$name@$hostAddress" else name
+        val key = storageKey(baseKey, server.platform)
+        val candidate = if (spoofedName) server.copy(name = "$name ($hostAddress)") else server
+        return key to merged(stored[key], candidate, isRaop)
+    }
+
     /** AirPlay and AirPlay 2 entries for one device coexist, so their key names the platform. */
-    fun storageKey(baseKey: String, platform: CastPlatform?): String =
+    private fun storageKey(baseKey: String, platform: CastPlatform?): String =
         platform?.takeIf(::isAirPlay)?.let { "$baseKey::${it.label}" } ?: baseKey
 
     /** The key a service that has disappeared was stored under. */
@@ -65,7 +91,7 @@ internal object MdnsServers {
      * ([isRaop]) takes the new entry, any other keeps the existing one and only adopts a
      * non-default version. Everything else is simply replaced.
      */
-    fun merged(existing: Server?, candidate: Server, isRaop: Boolean): Server {
+    private fun merged(existing: Server?, candidate: Server, isRaop: Boolean): Server {
         if (existing == null ||
             existing.platform != candidate.platform ||
             !isAirPlay(candidate.platform)
