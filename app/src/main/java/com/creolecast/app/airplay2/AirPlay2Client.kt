@@ -148,7 +148,10 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
     }
 
     /** Best-effort graceful session end. Call before [close] where possible so the
-     *  receiver drops the session immediately instead of waiting out its own timeout. */
+     *  receiver drops the session immediately instead of waiting out its own timeout.
+     *  A failed TEARDOWN (socket, crypto or receiver error) is logged, not propagated:
+     *  the session is being dropped either way. */
+    @Suppress("TooGenericExceptionCaught") // Best-effort boundary, see KDoc.
     fun teardown() {
         try {
             if (control.sessionUrl.isNotEmpty()) {
@@ -160,7 +163,9 @@ class AirPlay2Client(private val config: AirPlay2ClientConfig) {
                 )
                 control.rtsp("TEARDOWN", null, null)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.d(TAG, "TEARDOWN to ${config.host} failed", e)
+        }
     }
 
     fun close() {
