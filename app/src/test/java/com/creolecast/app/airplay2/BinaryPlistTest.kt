@@ -72,6 +72,44 @@ class BinaryPlistTest {
         assertEquals("bplist00", encoded.copyOf(8).toString(Charsets.UTF_8))
     }
 
+    @Test
+    fun `collection and string lengths 14 and 15 round-trip`() {
+        for (n in listOf(14, 15)) {
+            val dict = linkedMapOf<String, Any?>()
+            for (i in 0 until n) dict["k$i"] = "v$i"
+            val list = (0 until n).map { "item-$it" }
+            val input = linkedMapOf<String, Any?>(
+                "dict" to dict,
+                "list" to list,
+                "str" to "s".repeat(n),
+                "data" to ByteArray(n) { it.toByte() }
+            )
+            val decoded = BinaryPlist.decode(BinaryPlist.encode(input))
+            assertEquals(dict, decoded["dict"])
+            assertEquals(list, decoded["list"])
+            assertEquals("s".repeat(n), decoded["str"])
+            assertArrayEquals(ByteArray(n) { it.toByte() }, decoded["data"] as? ByteArray)
+        }
+    }
+
+    @Test
+    fun `offset table widens past 255 and 65535 bytes`() {
+        // Total object bytes of ~300 and ~70 000 force 2- and 4-byte offset entries.
+        // Each blob stays under 64 KiB so only the offset-table width varies.
+        for (blobCount in listOf(1, 10)) {
+            val blobSize = if (blobCount == 1) 300 else 7_000
+            val blobs = List(blobCount) { b -> ByteArray(blobSize) { ((it + b) % 251).toByte() } }
+            val input = linkedMapOf<String, Any?>()
+            blobs.forEachIndexed { b, blob -> input["raw$b"] = blob }
+            input["tail"] = "end"
+            val decoded = BinaryPlist.decode(BinaryPlist.encode(input))
+            blobs.forEachIndexed { b, blob ->
+                assertArrayEquals(blob, decoded["raw$b"] as? ByteArray)
+            }
+            assertEquals("end", decoded["tail"])
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `decode fails on non-plist data`() {
         BinaryPlist.decode("not a plist".toByteArray())
