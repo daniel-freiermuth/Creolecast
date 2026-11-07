@@ -85,6 +85,9 @@ internal class CastController(
         originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
         rememberDestination(destination)
+        // AirPlay handshakes put the receiver at 0 dB (RaopSession, AirPlay2Client); the
+        // notification and volume keys must start there too, not at the last cast's level.
+        volume.reset()
 
         if (!enterForeground()) return
         wakeLock.acquire()
