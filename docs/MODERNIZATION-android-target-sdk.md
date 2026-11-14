@@ -5,7 +5,7 @@ Status as of 2026-10-10. Verified against the sources linked below, not from mem
 ## Current state
 
 | | Value | Where |
-|---|---|---|
+| --- | --- | --- |
 | `compileSdk` | 37 | `app/build.gradle.kts` |
 | `targetSdk` | **36** (raised from 35 in this change) | `app/build.gradle.kts` |
 | `minSdk` | 34 | `app/build.gradle.kts` |
@@ -25,7 +25,7 @@ Applicable target-36 changes
 checked against the code:
 
 | Change | Exposure in CreoleCast |
-|---|---|
+| --- | --- |
 | Predictive back on by default, `onBackPressed`/`KEYCODE_BACK` no longer delivered | None: no `onBackPressed`, `onKeyDown`, `OnBackPressedDispatcher` or `OnBackInvokedCallback` anywhere in `app/src/main` |
 | `windowOptOutEdgeToEdgeEnforcement` disabled | None: not used. Edge-to-edge has been enforced since target 35; layouts already use `fitsSystemWindows="true"` |
 | Orientation/resizability/aspect-ratio ignored on sw≥600dp | None declared: no `screenOrientation`, `resizeableActivity`, `min/maxAspectRatio`, `setRequestedOrientation` |
@@ -33,9 +33,10 @@ checked against the code:
 | `scheduleAtFixedRate` runs at most one missed execution | Not used |
 | Safer Intents | Opt-in via `intentMatchingFlags`; not opted in |
 
-Verification: `assembleDebug assembleRelease lintDebug testDebugUnitTest` pass. `aapt2 dump badging`
-on the release APK reports `targetSdkVersion:'36'`. Lint reports the same 124 warnings, by issue ID, as
-at target 35, and 0 errors. The remaining `OldTargetApi` warning is expected because 37 is the latest.
+Verification: `assembleDebug assembleRelease lintDebug testDebugUnitTest` pass.
+`aapt2 dump badging` on the release APK reports `targetSdkVersion:'36'`. Lint reports the
+same 124 warnings, by issue ID, as at target 35, and 0 errors. The remaining `OldTargetApi`
+warning is expected because 37 is the latest.
 
 ## Step 2: release tooling (needs a decision)
 
@@ -81,7 +82,7 @@ and [behavior-changes-17](https://developer.android.com/about/versions/17/behavi
 Every protocol CreoleCast speaks is LAN traffic, and several paths are not mDNS-from-the-app:
 
 | Path | File | Traffic | Picker-compatible? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | NSD discovery and resolve (`_audiocast`, `_airplay`, `_googlecast`, `_snapcast-ctrl`) | `DiscoveryManager.kt` | mDNS via system | Yes, but one service per pick. The picker returns one user-chosen device and cannot populate the server list |
 | JmDNS `_raop._tcp` | `raop/RaopDiscovery.kt` | raw multicast from the app | No |
 | SSDP M-SEARCH plus device-description HTTP fetch | `DiscoveryManager.kt` | UDP multicast, TCP | No |
