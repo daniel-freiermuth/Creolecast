@@ -83,8 +83,7 @@ Every protocol CreoleCast speaks is LAN traffic, and several paths are not mDNS-
 
 | Path | File | Traffic | Picker-compatible? |
 | --- | --- | --- | --- |
-| NSD discovery and resolve (`_audiocast`, `_airplay`, `_googlecast`, `_snapcast-ctrl`) | `DiscoveryManager.kt` | mDNS via system | Yes, but one service per pick. The picker returns one user-chosen device and cannot populate the server list |
-| JmDNS `_raop._tcp` | `raop/RaopDiscovery.kt` | raw multicast from the app | No |
+| NSD discovery and resolve (`_audiocast`, `_airplay`, `_raop`, `_googlecast`, `_snapcast-ctrl`, `_snapcast-jsonrpc`) | `DiscoveryManager.kt`, `NsdBrowser.kt` | mDNS via system | Yes, but one service per pick. The picker returns one user-chosen device and cannot populate the server list |
 | SSDP M-SEARCH plus device-description HTTP fetch | `DiscoveryManager.kt` | UDP multicast, TCP | No |
 | `DISCOVER_AUDIOCAST` broadcast to 255.255.255.255:12888 | `DiscoveryManager.kt` | UDP broadcast | No |
 | AirPlay 1/2 RTSP, timing/control/audio UDP, event channel | `AudioCastService.kt`, `airplay2/AirPlay2Client.kt` | TCP and UDP, both directions | Only if the host came from the picker; inbound timing/control replies unverified |
@@ -135,7 +134,7 @@ Every protocol CreoleCast speaks is LAN traffic, and several paths are not mDNS-
 - **Certificate Transparency on by default:** affects HTTPS only. The LAN protocols here are
   plain HTTP or app-level crypto. Recheck `network_security_config` before bumping.
 - **Static final fields immutable via reflection:** there is no `getDeclaredField` or
-  `isAccessible = true` in app code. Dependencies (BouncyCastle, JmDNS, Ktor) are unchecked;
+  `isAccessible = true` in app code. Dependencies (BouncyCastle, Ktor) are unchecked;
   run the app.
 
 ### What breaks and for whom
