@@ -13,6 +13,8 @@ import androidx.annotation.Nullable;
 public final class Log {
     private Log() {}
 
+    public static boolean isLoggable(@Nullable String tag, int level) { return false; }
+
     public static int v(@Nullable String tag, @NonNull String msg) { return 0; }
     public static int v(@Nullable String tag, @Nullable String msg, @Nullable Throwable tr) { return 0; }
     public static int d(@Nullable String tag, @NonNull String msg) { return 0; }
