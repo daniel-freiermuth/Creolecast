@@ -1,7 +1,5 @@
 package com.creolecast.app.cast
 
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.plugins.websocket.webSocket
 import java.io.InputStream
 import java.net.InetAddress
@@ -28,18 +26,15 @@ class CastHttpClientTest {
         ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { server ->
             server.soTimeout = CONNECT_WAIT_MS
             val firstOpcode = CompletableFuture.supplyAsync { receiveFirstFrameOpcode(server) }
-            createCastHttpClient().use { castClient ->
-                // Same engine and plugins; logging is off because android.util.Log is not mocked.
-                castClient.config { install(Logging) { level = LogLevel.NONE } }.use { client ->
-                    runBlocking {
-                        client.webSocket(
-                            host = LOOPBACK,
-                            port = server.localPort,
-                            path = "/control"
-                        ) {
-                            // Returns once the receiver drops the connection.
-                            incoming.receiveCatching()
-                        }
+            createCastHttpClient().use { client ->
+                runBlocking {
+                    client.webSocket(
+                        host = LOOPBACK,
+                        port = server.localPort,
+                        path = "/control"
+                    ) {
+                        // Returns once the receiver drops the connection.
+                        incoming.receiveCatching()
                     }
                 }
             }
